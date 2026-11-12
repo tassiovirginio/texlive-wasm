@@ -1,6 +1,6 @@
 {
   "name": "@typeward/texlive-wasm",
-  "version": "0.3.0-alpha",
+  "version": "0.3.1-alpha",
   "description": "TeX Live in WebAssembly — pdflatex, xelatex, lualatex in browsers and Node. Offline-first, Tauri-friendly.",
   "license": "MIT",
   "repository": {

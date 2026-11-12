@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1-alpha
+
+- Pin CI to Ubuntu 24.04 so browser dependencies remain compatible with the validated Playwright version.
+- Preserve the previously published 0.3.0-alpha tag and ship the corrected CI contract in a patch release.
+
 ## 0.3.0-alpha
 
 - Run Emscripten engines in Node worker threads, including local assets, ES/CJS transport, deadlines and cancellation.

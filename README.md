@@ -100,7 +100,7 @@ carry, and the release workflow rejects a tag that does not match
 `package.json`.
 
 Downstream apps (the Typeward app included) should pin an exact version —
-`"@typeward/texlive-wasm": "0.3.0-alpha"`, no `^`/`~` — so the wrapper and its
+`"@typeward/texlive-wasm": "0.3.1-alpha"`, no `^`/`~` — so the wrapper and its
 assets can never drift apart across installs.
 
 npm dist-tags follow the release channel: stable versions publish as `latest`,
@@ -336,7 +336,7 @@ The npm scope remains `@typeward/texlive-wasm`; publishing this fork does not pu
 to that npm scope. Download the matching wrapper tarball and install it locally:
 
 ```sh
-npm install ./typeward-texlive-wasm-0.3.0-alpha.tgz
+npm install ./typeward-texlive-wasm-0.3.1-alpha.tgz
 npx texlive-wasm download-assets
 ```
 
