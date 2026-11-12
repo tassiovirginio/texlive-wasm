@@ -10,7 +10,7 @@ const pkg=JSON.parse(await readFile('package.json','utf8'));
 const root=await mkdtemp(join(tmpdir(),'texlive-installed-'));
 try {
   await writeFile(join(root,'package.json'),'{"private":true,"type":"module"}');
-  execFileSync('npm',['install','--prefix',root,'--offline','--no-audit','--no-fund',join(release,`typeward-texlive-wasm-${pkg.version}.tgz`)],{stdio:'pipe'});
+  execFileSync('npm',['install','--prefix',root,'--no-audit','--no-fund',join(release,`typeward-texlive-wasm-${pkg.version}.tgz`)],{stdio:'pipe'});
   const installed=join(root,'node_modules/@typeward/texlive-wasm');
   const preload=join(root,'mock-release.cjs');
   await writeFile(preload,`const fs=require('node:fs');const path=require('node:path');globalThis.fetch=async(url)=>{const name=new URL(url).pathname.split('/').pop();const file=path.join(process.env.TEXLIVE_RELEASE_DIR,name);return fs.existsSync(file)?new Response(fs.readFileSync(file)):new Response(null,{status:404});};`);
