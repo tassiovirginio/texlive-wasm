@@ -1,3 +1,4 @@
+import { selectFontPacks, type FontCatalog } from '../project/fonts';
 import { binaryText } from './state';
 import { sha256Hex } from '../core/manifest';
 import { createEngineManager, type EngineManagerOptions } from '../core/manager';
@@ -14,6 +15,8 @@ import {
 export interface CompileSessionOptions extends EngineManagerOptions {
   /** Change this identifier when external TDS/font resources change. */
   resourceVersion: string;
+  /** Optional automatic exact-family packs, shared with TeX/converter helpers. */
+  fontCatalog?: { catalog: FontCatalog; baseUrl: string; extraFamilies?: string[] };
 }
 export type SessionCompileOptions = Omit<
   LatexmkOptions,
@@ -21,12 +24,21 @@ export type SessionCompileOptions = Omit<
 >;
 export interface CompileSession {
   compile(options: SessionCompileOptions): Promise<LatexmkResult>;
+  /** Warm workers with an isolated minimal document, respecting save-data hints. */
+  warmup(options: {
+    engine: SessionCompileOptions['engine'];
+    force?: boolean;
+    signal?: AbortSignal;
+    files?: FileInput[];
+  }): Promise<boolean>;
   clear(): void;
   dispose(): Promise<void>;
 }
 
 /** Serialized incremental project session; no global or cross-project cache. */
 export function createCompileSession(options: CompileSessionOptions): CompileSession {
+  let activeFontPacks: { url: string; sha256: string }[] = [];
+  let activeFontKey = '';
   let active: { deadline: number | null; signal?: AbortSignal } | undefined;
   const manager = createEngineManager({
     ...options,
@@ -38,6 +50,9 @@ export function createCompileSession(options: CompileSessionOptions): CompileSes
           : Math.max(1, Math.ceil(active.deadline - performance.now()));
       return {
         ...config,
+        ...(id !== 'biber' && activeFontPacks.length
+          ? { resourcePacks: [...(config.resourcePacks ?? []), ...activeFontPacks] }
+          : {}),
         ...(remaining !== null
           ? {
               initTimeoutMs:
@@ -50,6 +65,18 @@ export function createCompileSession(options: CompileSessionOptions): CompileSes
       };
     },
   });
+  const configureFonts = async (files: FileInput[]) => {
+    if (!options.fontCatalog) return [] as string[];
+    const { catalog, baseUrl, extraFamilies } = options.fontCatalog;
+    const plan = selectFontPacks(files, catalog, baseUrl, extraFamilies);
+    const key = JSON.stringify(plan.packs.map((pack) => [pack.url, pack.sha256]));
+    if (key !== activeFontKey) {
+      await manager.dispose();
+      activeFontPacks = plan.packs;
+      activeFontKey = key;
+    }
+    return plan.maps;
+  };
   let previous: { key: string; sourceKey: string; files: FileInput[] } | undefined;
   let queue: Promise<unknown> = Promise.resolve();
   let disposed = false;
@@ -70,17 +97,28 @@ export function createCompileSession(options: CompileSessionOptions): CompileSes
         )
           throw new Error('Invalid timeoutMs');
         if (opts.signal?.aborted) throw new Error('Compile session aborted');
+        const sessionStarted = performance.now();
+        opts.onEvent?.({
+          type: 'start',
+          pass: 0,
+          partial: !!opts.includeOnly?.length,
+          elapsedMs: 0,
+        });
         const deadline =
           opts.timeoutMs && opts.timeoutMs > 0 ? performance.now() + opts.timeoutMs : null;
         active = { deadline, ...(opts.signal ? { signal: opts.signal } : {}) };
+        const maps = await configureFonts(opts.files);
+        if (maps.length) opts.fontMaps = [...new Set([...(opts.fontMaps ?? []), ...maps])];
         const startedGeneration = generation;
         // Source edits can reuse auxiliaries; changed file sets, assets, engines,
         // environment or external resources require a pristine project state.
         const key = JSON.stringify([
           options.resourceVersion,
+          activeFontKey,
           opts.engine,
           opts.mainTex,
           opts.processEnv,
+          opts.fontMaps,
           opts.files
             .filter((f) => /\.(tex|ltx)$/i.test(f.path))
             .map((f) => {
@@ -159,12 +197,34 @@ export function createCompileSession(options: CompileSessionOptions): CompileSes
           (opts.glossaries !== false && glossary)
         )
           ids.push('makeindex');
-        previous = undefined; // a failed/cancelled compile must not leave old seeds
+        if (!opts.includeOnly?.length) previous = undefined; // a failed/cancelled compile must not leave old seeds
         const result = await manager.withEngines(ids, async (handles) => {
           if (deadline !== null && performance.now() >= deadline)
             throw new Error('Compile session initialization exceeded timeoutMs');
-          return latexmk({
+          const prepareMs = performance.now() - sessionStarted;
+          opts.onEvent?.({
+            type: 'prepare',
+            pass: 0,
+            partial: !!opts.includeOnly?.length,
+            elapsedMs: prepareMs,
+            durationMs: prepareMs,
+          });
+          const compiled = await latexmk({
             ...opts,
+            ...(opts.onEvent
+              ? {
+                  onEvent: (event) => {
+                    if (event.type !== 'start')
+                      opts.onEvent!({
+                        ...event,
+                        elapsedMs: performance.now() - sessionStarted,
+                        ...(event.type === 'complete'
+                          ? { durationMs: prepareMs + (event.durationMs ?? 0) }
+                          : {}),
+                      });
+                  },
+                }
+              : {}),
             ...(deadline !== null
               ? { timeoutMs: Math.max(1, Math.ceil(deadline - performance.now())) }
               : {}),
@@ -179,8 +239,11 @@ export function createCompileSession(options: CompileSessionOptions): CompileSes
               ...(handles.has('makeindex') ? { makeindex: handles.get('makeindex')! } : {}),
             },
           });
+          compiled.timings.unshift({ command: 'resource preparation', durationMs: prepareMs });
+          compiled.totalMs = performance.now() - sessionStarted;
+          return compiled;
         });
-        if (result.complete && !opts.tools && generation === startedGeneration)
+        if (result.complete && !result.partial && !opts.tools && generation === startedGeneration)
           previous = { key, sourceKey, files: result.auxiliaryFiles.map(copy) };
         return result;
       };
@@ -189,6 +252,58 @@ export function createCompileSession(options: CompileSessionOptions): CompileSes
       });
       queue = result.catch(() => {});
       return result;
+    },
+    warmup(input) {
+      if (disposed) return Promise.reject(new Error('Compile session is disposed'));
+      const task = queue
+        .then(async () => {
+          if (input.signal?.aborted) throw new Error('Warmup aborted');
+          active = {
+            deadline: performance.now() + 300000,
+            ...(input.signal ? { signal: input.signal } : {}),
+          };
+          const hints =
+            typeof navigator === 'undefined'
+              ? undefined
+              : (navigator as Navigator & {
+                  connection?: { saveData?: boolean };
+                  deviceMemory?: number;
+                });
+          if (
+            !input.force &&
+            (hints?.connection?.saveData ||
+              (hints?.deviceMemory !== undefined && hints.deviceMemory <= 2))
+          )
+            return false;
+          await configureFonts(input.files ?? []);
+          const engine = await manager.engine(input.engine);
+          const { PdfLatex } = await import('../engines/pdflatex');
+          const { XeLatex } = await import('../engines/xelatex');
+          const { LuaLatex } = await import('../engines/lualatex');
+          const Wrapper =
+            input.engine === 'pdflatex'
+              ? PdfLatex
+              : input.engine === 'xelatex'
+                ? XeLatex
+                : LuaLatex;
+          const result = await new Wrapper({ engine }).compile({
+            mainTex: 'warm.tex',
+            files: [
+              {
+                path: 'warm.tex',
+                content: '\\documentclass{article}\\begin{document}.\\end{document}',
+              },
+            ],
+            ...(input.engine === 'xelatex' ? { noPdf: true } : {}),
+            ...(input.signal ? { signal: input.signal } : {}),
+          });
+          return result.exitCode === 0;
+        })
+        .finally(() => {
+          active = undefined;
+        });
+      queue = task.catch(() => {});
+      return task;
     },
     clear() {
       generation++;

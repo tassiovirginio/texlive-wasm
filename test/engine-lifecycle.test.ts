@@ -145,3 +145,31 @@ it('cancels a queued call without terminating an unrelated active run', async ()
   expect(mocks.api.run).toHaveBeenCalledTimes(2);
   await handle.dispose();
 });
+
+it('sends acknowledged hashes once and rehashes mutated input buffers', async () => {
+  mocks.api.run.mockImplementation(async (opts: import('../src/core/types').RunOptions) => ({
+    ...result,
+    inputCache: opts.fileRefs?.map((ref) => ref.sha256) ?? [],
+  }));
+  const h = await create();
+  const content = new Uint8Array([1, 2, 3]);
+  const run = () => h.run({ args: [], files: [{ path: 'asset', content }] });
+  await run();
+  await run();
+  content[0] = 4;
+  await run();
+  const calls = mocks.api.run.mock.calls.map(([opts]) => opts);
+  expect(calls[0].files).toBeUndefined();
+  expect(calls[0].fileBlobs).toHaveLength(1);
+  expect(calls[1].fileBlobs).toHaveLength(0);
+  expect(calls[2].fileBlobs).toHaveLength(1);
+  expect(calls[2].fileRefs[0].sha256).not.toBe(calls[0].fileRefs[0].sha256);
+  await h.dispose();
+});
+it('can disable the project blob cache without changing raw inputs', async () => {
+  const h = await create({ projectCacheBytes: 0 });
+  const options = { args: [], files: [{ path: 'main.tex', content: 'source' }] };
+  await h.run(options);
+  expect(mocks.api.run.mock.calls[0]![0]).toEqual(options);
+  await h.dispose();
+});

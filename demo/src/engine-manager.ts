@@ -5,7 +5,7 @@
  */
 
 import { createCompileSession } from '@typeward/texlive-wasm';
-import type { EngineId, FileInput, LatexmkEngine, LatexmkResult } from '@typeward/texlive-wasm';
+import type { EngineId, FileInput, LatexmkEngine, LatexmkResult, CompileEvent } from '@typeward/texlive-wasm';
 import { createSignal } from 'solid-js';
 
 /** Human-readable artifact sizes for status messages (see README table). */
@@ -89,6 +89,8 @@ export interface CompileRequest {
   mainTex: string;
   files: FileInput[];
   synctex?: boolean;
+  preview?: boolean;
+  onEvent?: (event: CompileEvent) => void;
 }
 
 /** Incremental edits use the same public session API recommended to consumers. */

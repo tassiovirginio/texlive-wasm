@@ -676,3 +676,98 @@ it('does not mistake pre-bibliography layout state for a cycle after helper inpu
   expect(r.success).toBe(true);
   expect(bibtex.calls).toHaveLength(1);
 });
+
+it('emits independent preview/progress events and marks includeonly results as partial', async () => {
+  const tex = fakeHandle('pdflatex', ({ args }) => {
+    expect(args.at(-1)).toBe('\\includeonly{chapters/a}\\input{main.tex}');
+    expect(args).toContain('-jobname=main');
+    return { outputs: { 'main.aux': 'A', 'main.pdf': 'PDF' } };
+  });
+  const events: import('../src/latexmk').CompileEvent[] = [];
+  const r = await latexmk({
+    engine: 'pdflatex',
+    mainTex: 'main.tex',
+    files: [],
+    handles: { tex },
+    includeOnly: ['chapters/a.tex'],
+    preview: true,
+    onEvent: (event) => {
+      events.push(event);
+      if (event.pdf) event.pdf.fill(0);
+    },
+  });
+  expect(r.partial).toBe(true);
+  expect(r.complete).toBe(false);
+  expect(r.success).toBe(true);
+  expect(new TextDecoder().decode(r.pdf)).toBe('PDF');
+  expect(r.totalMs).toBeGreaterThanOrEqual(0);
+  expect(r.timings).toHaveLength(2);
+  expect(events.map((e) => e.type)).toEqual([
+    'start',
+    'pass',
+    'preview',
+    'pass',
+    'preview',
+    'complete',
+  ]);
+});
+it('validates partial paths, exact map activation and preflight failures before starting TeX', async () => {
+  const tex = fakeHandle('pdflatex', ({ args }) => {
+    expect(args.at(-1)).toBe('\\pdfmapfile{+custom.map}\\pdfmapfile{+second.map}\\input{main.tex}');
+    return { outputs: { 'main.pdf': 'P', 'main.aux': 'A' } };
+  });
+  await latexmk({
+    engine: 'pdflatex',
+    mainTex: 'main.tex',
+    files: [],
+    fontMaps: ['custom.map', 'second.map'],
+    handles: { tex },
+  });
+  await expect(
+    latexmk({
+      engine: 'pdflatex',
+      mainTex: 'main.tex',
+      files: [],
+      includeOnly: ['../bad'],
+      handles: { tex },
+    }),
+  ).rejects.toThrow('includeOnly');
+  await expect(
+    latexmk({
+      engine: 'pdflatex',
+      mainTex: 'main.tex',
+      files: [],
+      fontMaps: ['bad{.map'],
+      handles: { tex },
+    }),
+  ).rejects.toThrow('font map');
+  await expect(
+    latexmk({
+      engine: 'pdflatex',
+      mainTex: 'main.tex',
+      files: [],
+      preflight: true,
+      handles: { tex },
+    }),
+  ).rejects.toThrow('preflight');
+});
+it('converts XeTeX previews with the same exact font maps as the final PDF', async () => {
+  const tex = fakeHandle('xelatex', () => ({ outputs: { 'main.xdv': 'X', 'main.aux': 'A' } }));
+  const convert = fakeHandle('xdvipdfmx', ({ args }) => {
+    expect(args).toContain('custom.map');
+    return { outputs: { 'main.pdf': 'P' } };
+  });
+  const events: string[] = [];
+  const r = await latexmk({
+    engine: 'xelatex',
+    mainTex: 'main.tex',
+    files: [],
+    fontMaps: ['custom.map'],
+    preview: true,
+    onEvent: (e) => events.push(e.type),
+    handles: { tex, xdvipdfmx: convert },
+  });
+  expect(r.success).toBe(true);
+  expect(events.filter((e) => e === 'preview')).toHaveLength(2);
+  expect(convert.calls).toHaveLength(3);
+});

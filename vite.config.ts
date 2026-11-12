@@ -37,6 +37,7 @@ export default defineConfig({
     rollupOptions: {
       external: [
         'comlink',
+        'xz-decompress',
         '@tauri-apps/plugin-fs',
         'node:fs',
         'node:path',

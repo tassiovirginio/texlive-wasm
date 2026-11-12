@@ -1,0 +1,30 @@
+[
+  {
+    "id": "article",
+    "engine": "pdflatex",
+    "passes": 3,
+    "pdfBytes": 86162,
+    "durationMs": 7472.862246000001
+  },
+  {
+    "id": "report",
+    "engine": "pdflatex",
+    "passes": 2,
+    "pdfBytes": 37655,
+    "durationMs": 1839.0605240000004
+  },
+  {
+    "id": "slides",
+    "engine": "pdflatex",
+    "passes": 2,
+    "pdfBytes": 49407,
+    "durationMs": 3544.9080630000008
+  },
+  {
+    "id": "native-fidelity",
+    "engine": "pdflatex",
+    "passes": 2,
+    "pdfBytes": 52324,
+    "durationMs": 4997.952553000001
+  }
+]

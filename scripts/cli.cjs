@@ -35,7 +35,7 @@ const REPO_OWNER = process.env.TEXLIVE_WASM_REPO_OWNER || packageRepository?.[1]
 const REPO_NAME = process.env.TEXLIVE_WASM_REPO_NAME || packageRepository?.[2] || 'texlive-wasm';
 
 // Published TDS bundle names (scripts/pack-tds.mjs → scripts/pack-release.mjs).
-const TDS_BUNDLE = /^texmf(-(core|pack)-[A-Za-z0-9]+)?\.tar\.(gz|br)$/;
+const TDS_BUNDLE = /^texmf(-(core|pack|font)-[A-Za-z0-9-]+)?\.tar\.(gz|br)$/;
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -130,7 +130,7 @@ async function downloadAssets(opts) {
   const available = Object.keys(checksums.assets ?? {});
   // Accept both "pdflatex-emscripten" and "pdflatex-emscripten.tar.gz":
   // checksums.json keys carry the archive suffix.
-  const assetNames = (opts.assets ?? available.filter((name) => !name.endsWith('.tgz') && !name.startsWith('texmf-pack-'))).map((name) => {
+  const assetNames = (opts.assets ?? available.filter((name) => !name.endsWith('.tgz') && !name.startsWith('texmf-pack-') && !name.startsWith('texmf-font-') && name !== 'texlive-package-index.json' && name !== 'font-packs.json')).map((name) => {
     if (checksums.assets?.[name]) return name;
     const suffixed = available.find(
       (a) => a === `${name}.tar.gz` || a === `${name}.gz` || a === `${name}.dat.gz`,
@@ -180,7 +180,7 @@ async function downloadAssets(opts) {
       // TauriFS and the manifest backends read the unpacked tree. Keep both —
       // extracting and deleting the archive would break the first.
       fs.writeFileSync(path.join(dest, name), buf);
-      if (name.startsWith('texmf-pack-')) {
+      if (name.startsWith('texmf-pack-') || name.startsWith('texmf-font-')) {
         log(`  kept optional resource pack ${name}`);
       } else if (name.endsWith('.tar.gz')) {
         await extractTarGz(buf, dest);

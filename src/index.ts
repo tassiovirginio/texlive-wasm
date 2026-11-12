@@ -66,3 +66,23 @@ export type {
   SessionCompileOptions,
 } from './latexmk/session';
 export type { CompileDiagnostic } from './latexmk/diagnostics';
+
+export { analyzeProject, maskTex } from './project/analyze';
+export type { ProjectAnalysis, ProjectProblem } from './project/analyze';
+export { detectFontFamilies, selectFontPacks } from './project/fonts';
+export type { FontPack, FontCatalog } from './project/fonts';
+export { parseTlpdb, packagesForFile, createPackageFs } from './packages';
+export type {
+  PackageIndex,
+  PackageRecord,
+  PackageFsOptions,
+  PackageArchive,
+  PackageCache,
+} from './packages';
+export { refineSynctex, normalizedWords } from './synctex/refine';
+export type { RefineOptions } from './synctex/refine';
+
+export type { CompileEvent } from './latexmk';
+
+export { decodePackageXz } from './packages/xz';
+export { loadPackageIndex, createHttpPackageFs } from './packages/http';

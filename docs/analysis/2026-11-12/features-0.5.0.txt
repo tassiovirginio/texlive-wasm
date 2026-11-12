@@ -1,0 +1,12 @@
+PASS exact family psnfss
+PASS exact family libertine
+PASS exact family newtx
+PASS exact family inconsolata
+PASS exact family montserrat
+PASS exact family noto
+PASS exact family tex-gyre
+PASS exact optional fonts xelatex
+PASS exact optional fonts lualatex
+PASS partial/full isolation, previews and source navigation
+PASS verified package resolution with real XZ archive
+PASS cached worker transport: {"sentBytes":0,"reusedBytes":1048649}

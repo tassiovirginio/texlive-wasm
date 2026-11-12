@@ -172,6 +172,21 @@ async function main() {
     await copyFile(join(artifactsDir, 'resource-packs.json'), join(outDir, 'resource-packs.json'));
     assets['resource-packs.json'] = await hashAndSize(join(outDir, 'resource-packs.json'));
   }
+  for (const name of ['font-packs.json', 'texlive-package-index.json']) {
+    if (!existsSync(join(artifactsDir, name))) continue;
+    if (name === 'font-packs.json') {
+      const catalog = JSON.parse(await readFile(join(artifactsDir, name), 'utf8'));
+      if (catalog.version.replace(/^v/, '') !== version.replace(/^v/, ''))
+        throw new Error('Font catalog version mismatch');
+      for (const pack of Object.values(catalog.families)) {
+        const staged = assets[pack.url];
+        if (!staged || staged.sha256 !== pack.sha256 || staged.size !== pack.size)
+          throw new Error('Font catalog asset mismatch: ' + pack.url);
+      }
+    }
+    await copyFile(join(artifactsDir, name), join(outDir, name));
+    assets[name] = await hashAndSize(join(outDir, name));
+  }
   const checksums = {
     version,
     generatedAt: new Date().toISOString(),
@@ -257,7 +272,7 @@ function assertNonEmptyFile(path) {
 function findTdsBundles(artifactsDir) {
   const found = [];
   for (const name of readdirSync(artifactsDir).sort()) {
-    if (name === 'texmf.tar.gz' || /^texmf-(?:core|pack)-[A-Za-z0-9]+\.tar\.gz$/.test(name)) {
+    if (name === 'texmf.tar.gz' || /^texmf-(?:core|pack|font)-[A-Za-z0-9-]+\.tar\.gz$/.test(name)) {
       const path = join(artifactsDir, name);
       if (statSync(path).isFile()) found.push({ name, path });
     }

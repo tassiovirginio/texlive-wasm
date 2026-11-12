@@ -420,3 +420,7 @@ TDS without enlarging the core for every app.
 
 See [0.4 integration and validation](docs/validation-0.4.0-alpha.md) for setup,
 cache invalidation, resource profiles and explicit host-tool integrations.
+
+### Optional project features in 0.5
+
+Exact-family font packs, verified on-demand TeX packages, project preflight, progress/previews, isolated partial builds, warmup, content-addressed worker inputs and SyncTeX phrase refinement are available as optional APIs. See the [integration guide](docs/features-0.5.0.md) and [development plan](docs/development-0.5.0.md).

@@ -149,3 +149,64 @@ it('rejects invalid timeouts and pre-cancelled jobs before loading a worker', as
   expect(state.loaded).toHaveLength(0);
   await s.dispose();
 });
+
+it('warms explicitly, respects save-data hints, and preserves the full cache after a partial build', async () => {
+  const s = createCompileSession({ config, resourceVersion: 'v1' });
+  vi.stubGlobal('navigator', { connection: { saveData: true } });
+  expect(await s.warmup({ engine: 'pdflatex' })).toBe(false);
+  expect(state.loaded).toHaveLength(0);
+  vi.unstubAllGlobals();
+  expect(await s.warmup({ engine: 'pdflatex', force: true })).toBe(true);
+  await s.compile(options);
+  await s.compile({ ...options, includeOnly: ['chapter'] });
+  state.calls = [];
+  await s.compile(options);
+  expect(state.calls[0]!.options.files!.some((f) => f.path === 'main.aux')).toBe(true);
+  await s.dispose();
+});
+
+it('loads exact-family resources, invalidates workers on family changes and reports preparation', async () => {
+  const configured: import('../src/core/types').EngineConfig[] = [];
+  const s = createCompileSession({
+    config: () => {
+      const config = {};
+      configured.push(config);
+      return config;
+    },
+    resourceVersion: 'v1',
+    fontCatalog: {
+      baseUrl: 'https://app.test/',
+      catalog: {
+        version: 'v1',
+        families: {
+          inconsolata: { url: 'mono.tar.gz', sha256: 'a'.repeat(64), size: 1, maps: ['mono.map'] },
+        },
+      },
+    },
+  });
+  const events: string[] = [];
+  await s.compile({
+    ...options,
+    files: [{ path: 'main.tex', content: '\\usepackage{inconsolata}' }],
+    onEvent: (e) => events.push(e.type),
+  });
+  expect(state.calls[0]!.options.args.some((a) => a.includes('mono.map'))).toBe(true);
+  expect(events[0]).toBe('start');
+  expect(events).toContain('prepare');
+  expect(events.at(-1)).toBe('complete');
+  await s.compile(options);
+  expect(state.loaded).toEqual(['pdflatex', 'pdflatex']);
+  vi.stubGlobal('navigator', { deviceMemory: 2 });
+  try {
+    expect(await s.warmup({ engine: 'xelatex' })).toBe(false);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+  const c = new AbortController();
+  c.abort();
+  await expect(s.warmup({ engine: 'xelatex', signal: c.signal })).rejects.toThrow('aborted');
+  expect(await s.warmup({ engine: 'xelatex', force: true })).toBe(true);
+  expect(state.calls.at(-1)!.options.args).toContain('--no-pdf');
+  await s.dispose();
+  await expect(s.warmup({ engine: 'pdflatex' })).rejects.toThrow('disposed');
+});

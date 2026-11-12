@@ -1,3 +1,4 @@
+import { InputBlobCache } from './blobs';
 import { fetchAsset } from './assets';
 /**
  * Worker entry point. One Comlink-exposed instance per engine.
@@ -34,6 +35,7 @@ import { safeRelativePath, safeResolve } from './paths';
 export interface BackendMeta {
   id: string;
   hasList: boolean;
+  hasResolve?: boolean;
   hasInit: boolean;
   hasDispose: boolean;
 }
@@ -43,6 +45,7 @@ export interface BackendMeta {
  * top-level Comlink proxy (nested proxies are not supported by Comlink).
  */
 export interface BackendHost {
+  resolve?(index: number, name: string): Promise<{ path: string; content: Uint8Array }[]>;
   read(index: number, tdsPath: string): Promise<Uint8Array | null>;
   exists(index: number, tdsPath: string): Promise<boolean>;
   list(index: number, tdsPrefix: string): Promise<string[]>;
@@ -164,6 +167,7 @@ function selectsOwnFormat(args: string[]): boolean {
 }
 
 class WorkerImpl implements WorkerApi {
+  private inputs = new InputBlobCache();
   private engineId: EngineId | null = null;
   private config: EngineConfig | null = null;
   private backends: VfsBackend[] = [];
@@ -226,6 +230,7 @@ class WorkerImpl implements WorkerApi {
   private stderrBuf = '';
 
   async init(opts: WorkerInitOptions, host?: BackendHost): Promise<void> {
+    this.inputs = new InputBlobCache(opts.config.projectCacheBytes);
     this.engineId = opts.engineId;
     this.config = opts.config;
     this.backends = (opts.backendMeta ?? []).map((meta, i) =>
@@ -605,6 +610,17 @@ class WorkerImpl implements WorkerApi {
     const maxRetries = lazy === false ? 0 : lazy === true ? 8 : Math.max(0, lazy.maxRetries ?? 8);
     let exitCode = 0;
     let retriesUsed = 0;
+    let inputTransport: { sentBytes: number; reusedBytes: number } | undefined = opts.files
+      ? {
+          sentBytes: opts.files.reduce((sum, file) => sum + normalizeBytes(file.content).length, 0),
+          reusedBytes: 0,
+        }
+      : undefined;
+    if (opts.fileRefs) {
+      const received = await this.inputs.receive(opts.fileRefs, opts.fileBlobs ?? []);
+      opts = { ...opts, files: received.files };
+      inputTransport = { sentBytes: received.sentBytes, reusedBytes: received.reusedBytes };
+    }
     const missingAttempts = new Set<string>();
     const projectFonts = new Map(
       (opts.files ?? [])
@@ -733,6 +749,8 @@ class WorkerImpl implements WorkerApi {
     }
 
     const result: RunResult = {
+      inputCache: this.inputs.keys(),
+      ...(inputTransport ? { inputTransport } : {}),
       exitCode,
       stdout,
       stderr,
@@ -823,6 +841,24 @@ class WorkerImpl implements WorkerApi {
   ): Promise<number> {
     let written = 0;
     for (const name of new Set(missing)) {
+      for (const backend of this.backends) {
+        if (!backend.resolve) continue;
+        const key = `resolve:${backend.id}:${name}`;
+        if (attempted.has(key)) continue;
+        attempted.add(key);
+        const resolved = await backend.resolve(name);
+        for (const file of resolved) {
+          const path = safeRelativePath(file.path);
+          if (!path || this.tdsFiles.has(path)) continue;
+          this.tdsFiles.set(path, file.content);
+          written++;
+          if (path.startsWith('fonts/')) {
+            this.varFiles.clear();
+            this.fontFiles.clear();
+          }
+        }
+        if (resolved.some((file) => file.path.split('/').pop() === name.split('/').pop())) break;
+      }
       // Exact manifest paths first; heuristic location guessing as fallback.
       const indexed = name.includes('/') ? [] : (this.nameIndex.get(name) ?? []);
       // These names were parsed out of an engine log — i.e. out of whatever
@@ -910,6 +946,7 @@ class WorkerImpl implements WorkerApi {
     this.varFiles.clear();
     this.fontFiles.clear();
     this.projectFonts.clear();
+    this.inputs.clear();
     this.treePlan = [];
     this.treeSize = -1;
     this.lsR = '';
@@ -948,6 +985,7 @@ function reconstructBackend(
     read: (tdsPath: string) => host.read(index, tdsPath),
     exists: (tdsPath: string) => host.exists(index, tdsPath),
   };
+  if (meta.hasResolve && host.resolve) backend.resolve = (name) => host.resolve!(index, name);
   if (meta.hasList) backend.list = (tdsPrefix: string) => host.list(index, tdsPrefix);
   if (meta.hasInit) backend.init = () => host.init(index);
   if (meta.hasDispose) backend.dispose = () => host.dispose(index);

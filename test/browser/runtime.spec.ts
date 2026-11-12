@@ -109,3 +109,78 @@ test('OPFS persists fetched files and rejects content absent from its manifest',
   if ('fallback' in result) expect(result).toEqual({ fallback: true, layers: [] });
   else expect(result).toEqual({ known: 'cached', unknown: null });
 });
+
+test('worker reuses content hashes and accepts changed bytes and deletions', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const entry = '/dist/index.js';
+    const { createEngine } = await import(entry);
+    const h = await createEngine('pdflatex', {
+      enginePath: new URL('/test/browser/fake-engine.wasm', location.href).href,
+      vfs: [
+        {
+          id: 'fixture',
+          list: () => ['web2c/pdftex/pdflatex.fmt'],
+          read: () => new TextEncoder().encode('FMT'),
+        },
+      ],
+    });
+    try {
+      const content = new Uint8Array(4096).fill(7);
+      const first = await h.run({
+        args: ['main.tex'],
+        files: [
+          { path: 'main.tex', content: 'hello' },
+          { path: 'asset.bin', content },
+        ],
+      });
+      const second = await h.run({
+        args: ['main.tex'],
+        files: [
+          { path: 'main.tex', content: 'hello' },
+          { path: 'asset.bin', content },
+        ],
+      });
+      content[0] = 8;
+      const third = await h.run({
+        args: ['main.tex'],
+        files: [
+          { path: 'main.tex', content: 'hello' },
+          { path: 'asset.bin', content },
+        ],
+      });
+      const fourth = await h.run({
+        args: ['main.tex'],
+        files: [{ path: 'main.tex', content: 'hello' }],
+      });
+      return [
+        first.inputTransport,
+        second.inputTransport,
+        third.inputTransport,
+        fourth.inputTransport,
+      ];
+    } finally {
+      await h.dispose();
+    }
+  });
+  expect(result).toEqual([
+    { sentBytes: 4101, reusedBytes: 0 },
+    { sentBytes: 0, reusedBytes: 4101 },
+    { sentBytes: 4096, reusedBytes: 5 },
+    { sentBytes: 0, reusedBytes: 5 },
+  ]);
+});
+
+test('decodes bounded XZ packages in the browser', async ({ page }) => {
+  const text = await page.evaluate(async () => {
+    const entry = '/dist/index.js';
+    const { decodePackageXz } = await import(entry);
+    const bytes = Uint8Array.from(
+      atob(
+        '/Td6WFoAAATm1rRGBMAXEyEBFgAAAAAAAAAAAFRp7t4BABJWZXJpZmllZCBicm93c2VyIFhaAADcXkr9gJI93wABMxPFkVNQH7bzfQEAAAAABFla',
+      ),
+      (c) => c.charCodeAt(0),
+    );
+    return new TextDecoder().decode(await decodePackageXz(bytes, 1024));
+  });
+  expect(text).toBe('Verified browser XZ');
+});

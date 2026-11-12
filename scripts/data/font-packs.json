@@ -1,0 +1,64 @@
+{
+  "version": "tl2023-final",
+  "repository": "https://ftp.math.utah.edu/pub/tex/historic/systems/texlive/2023/tlnet-final/",
+  "indexSha512": "dad335af8731a1f994a258ff0b642bf4566186783689ddc004ea66cc89cfe3c60e52e5fd02e5d965409a76bc9dbe68a9ad94cece809e4f75ca235e2ed29fec10",
+  "families": {
+    "psnfss": [
+      "times",
+      "helvetic",
+      "courier",
+      "symbol",
+      "zapfding",
+      "palatino",
+      "fontspec"
+    ],
+    "libertine": [
+      "libertine",
+      "fontaxes",
+      "mweights",
+      "xkeyval",
+      "fontspec"
+    ],
+    "newtx": [
+      "newtx",
+      "txfonts",
+      "fontaxes",
+      "xkeyval",
+      "etoolbox",
+      "xpatch",
+      "kastrup",
+      "xstring",
+      "mweights",
+      "xcolor",
+      "scalefnt",
+      "centernot",
+      "fontspec"
+    ],
+    "inconsolata": [
+      "inconsolata",
+      "fontaxes",
+      "xkeyval",
+      "fontspec",
+      "upquote"
+    ],
+    "montserrat": [
+      "montserrat",
+      "fontaxes",
+      "mweights",
+      "xkeyval",
+      "fontspec",
+      "ly1"
+    ],
+    "noto": [
+      "noto",
+      "fontaxes",
+      "mweights",
+      "xkeyval",
+      "fontspec"
+    ],
+    "tex-gyre": [
+      "tex-gyre",
+      "fontspec"
+    ]
+  }
+}

@@ -1,3 +1,4 @@
+import { sha256Hex } from './manifest';
 /**
  * createEngine — public entry point for the low-level API.
  *
@@ -81,6 +82,9 @@ async function initializeEngine(id: EngineId, config: EngineConfig): Promise<Eng
  */
 function makeBackendHost(backends: VfsBackend[]): BackendHost {
   return {
+    async resolve(i: number, name: string) {
+      return (await backends[i]!.resolve?.(name)) ?? [];
+    },
     async read(i: number, tdsPath: string): Promise<Uint8Array | null> {
       return (await backends[i]!.read(tdsPath)) ?? null;
     },
@@ -136,6 +140,7 @@ export async function createWorkerEngine(
   const backendMeta: BackendMeta[] = backends.map((b) => ({
     id: b.id,
     hasList: typeof b.list === 'function',
+    hasResolve: typeof b.resolve === 'function',
     hasInit: typeof b.init === 'function',
     hasDispose: typeof b.dispose === 'function',
   }));
@@ -194,9 +199,36 @@ export async function createWorkerEngine(
 
   void workerFailed.catch((err: Error) => terminate(err.message));
 
+  let cachedInputs = new Set<string>();
   const doRun = async (options: RunOptions): Promise<RunResult> => {
     if (!ready) throw new Error(`Engine ${id} has been disposed`);
     const { signal: _signal, ...runOptions } = options;
+    if (options.files && config.projectCacheBytes !== 0) {
+      const blobs = new Map<string, Uint8Array>();
+      const refs = await Promise.all(
+        options.files.map(async (file) => {
+          const bytes =
+            typeof file.content === 'string'
+              ? new TextEncoder().encode(file.content)
+              : file.content;
+          const sha256 = await sha256Hex(bytes);
+          if (!cachedInputs.has(sha256)) blobs.set(sha256, bytes);
+          return { path: file.path, sha256 };
+        }),
+      );
+      if (!ready) throw new Error(`Engine ${id} has been disposed`);
+      const { files: _files, ...rest } = runOptions;
+      const result = await Promise.race([
+        api.run({
+          ...rest,
+          fileRefs: refs,
+          fileBlobs: [...blobs].map(([sha256, content]) => ({ sha256, content })),
+        }),
+        killed,
+      ]);
+      cachedInputs = new Set(result.inputCache ?? []);
+      return result;
+    }
     return Promise.race([api.run(runOptions), killed]);
   };
 

@@ -39,7 +39,14 @@ const argOf = (flag) => {
 const pack = argOf('--pack');
 if (pack && !['portuguese', 'multilingual'].includes(pack))
   throw new Error('Unknown resource pack');
-const TEXMF = pack ? join(ARTIFACTS, 'resource-packs', pack) : join(ARTIFACTS, 'texmf');
+const customSource = argOf('--source');
+const customStem = argOf('--stem');
+if (customStem && !/^[a-z0-9-]+$/.test(customStem)) throw new Error('Invalid archive stem');
+const TEXMF = customSource
+  ? customSource
+  : pack
+    ? join(ARTIFACTS, 'resource-packs', pack)
+    : join(ARTIFACTS, 'texmf');
 const tier = argOf('--tier') ?? 'full';
 const engine = argOf('--engine');
 // Brotli-11 on a multi-hundred-MB tar costs many minutes. The release only
@@ -55,7 +62,13 @@ if (tier === 'core' && !engine) {
   process.exit(1);
 }
 
-const stem = pack ? `texmf-pack-${pack}` : tier === 'core' ? `texmf-core-${engine}` : 'texmf';
+const stem = customStem
+  ? customStem
+  : pack
+    ? `texmf-pack-${pack}`
+    : tier === 'core'
+      ? `texmf-core-${engine}`
+      : 'texmf';
 const TAR_GZ = join(ARTIFACTS, `${stem}.tar.gz`);
 const TAR_BR = join(ARTIFACTS, `${stem}.tar.br`);
 

@@ -581,3 +581,72 @@ it('resolves a missing babel language definition through the fallback backend', 
   expect(r.lazyFetchRetries).toBe(1);
   await worker.dispose();
 });
+
+it('loads a complete verified package from a backend basename resolver', async () => {
+  installEngine({
+    callMain: (_args, fs) => {
+      try {
+        fs.stat('/texmf-dist/tex/latex/pkg/missing.sty');
+        fs.stat('/texmf-dist/tex/latex/pkg/dependency.sty');
+        return 0;
+      } catch {
+        fs.writeFile('/project/main.log', "! LaTeX Error: File `missing.sty' not found.");
+        return 1;
+      }
+    },
+  });
+  const { host, meta } = hostFor(tdsMap());
+  meta[0]!.hasResolve = true;
+  host.resolve = async (_index, name) =>
+    name === 'missing.sty'
+      ? [
+          { path: 'tex/latex/pkg/missing.sty', content: enc('PKG') },
+          { path: 'tex/latex/pkg/dependency.sty', content: enc('DEP') },
+          { path: '../escape', content: enc('BAD') },
+        ]
+      : [];
+  const worker = new WorkerImpl();
+  await worker.init({ engineId: 'pdflatex', config: { enginePath }, backendMeta: meta }, host);
+  const r = await worker.run({ args: ['main.tex'] });
+  expect(r.exitCode).toBe(0);
+  expect(r.lazyFetchRetries).toBe(1);
+  await worker.dispose();
+});
+it('reconstructs exactly the new project manifest from cached input blobs', async () => {
+  let runs = 0;
+  installEngine({
+    callMain: (_args, fs) => {
+      if (runs++ === 0) {
+        fs.stat('/project/deleted.tex');
+        return 0;
+      }
+      try {
+        fs.stat('/project/deleted.tex');
+        throw Error('deleted file survived');
+      } catch (e) {
+        if ((e as Error).message === 'deleted file survived') throw e;
+      }
+      return 0;
+    },
+  });
+  const { sha256Hex } = await import('../src/core/manifest');
+  const bytes = enc('SOURCE');
+  const hash = await sha256Hex(bytes);
+  const { host, meta } = hostFor(tdsMap());
+  const worker = new WorkerImpl();
+  await worker.init({ engineId: 'pdflatex', config: { enginePath }, backendMeta: meta }, host);
+  await worker.run({
+    args: ['main.tex'],
+    fileRefs: [
+      { path: 'main.tex', sha256: hash },
+      { path: 'deleted.tex', sha256: hash },
+    ],
+    fileBlobs: [{ sha256: hash, content: bytes }],
+  });
+  const r = await worker.run({
+    args: ['main.tex'],
+    fileRefs: [{ path: 'renamed.tex', sha256: hash }],
+  });
+  expect(r.inputTransport).toEqual({ sentBytes: 0, reusedBytes: bytes.length });
+  await worker.dispose();
+});

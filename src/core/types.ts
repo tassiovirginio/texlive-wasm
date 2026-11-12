@@ -69,6 +69,8 @@ export interface EngineConfig {
    * artifacts without the backend.
    */
   lazyTds?: boolean;
+  /** Worker-local project blob cache limit (default 64 MiB); 0 disables delta transfer. */
+  projectCacheBytes?: number;
   /** Whether to use a Web Worker (default: true in browser, false in Node). */
   useWorker?: boolean;
   /** Verbosity for engine stdout/stderr piped through the wrapper. */
@@ -91,6 +93,9 @@ export interface RunOptions {
   args: string[];
   /** Files dropped into /project before the engine starts. */
   files?: FileInput[];
+  /** Internal complete project manifest for delta worker transport. */
+  fileRefs?: import('./blobs').InputReference[];
+  fileBlobs?: import('./blobs').InputBlob[];
   /** Working directory inside the engine. Default: `/project`. */
   cwd?: string;
   /** stdin payload, encoded as UTF-8 when a string is supplied. */
@@ -128,6 +133,9 @@ export interface RunOptions {
 }
 
 export interface RunResult {
+  /** Worker acknowledgement; file hashes only, no project paths. */
+  inputCache?: string[];
+  inputTransport?: { sentBytes: number; reusedBytes: number };
   exitCode: number;
   stdout: string;
   stderr: string;
@@ -153,6 +161,7 @@ export interface RunResult {
 }
 
 export interface LogEntry {
+  durationMs?: number;
   cmd: string;
   exitCode: number;
   stdout: string;
@@ -184,6 +193,8 @@ export interface VfsBackend {
    * Implementations should NOT throw on missing files.
    */
   read(tdsPath: string): Promise<Uint8Array | null> | Uint8Array | null;
+  /** Optional verified package resolver for missing basenames; paths remain TDS-relative. */
+  resolve?(name: string): Promise<{ path: string; content: Uint8Array }[]>;
   /** Cheap existence check; default is to attempt a read. */
   exists?(tdsPath: string): Promise<boolean> | boolean;
   /** Optional: enumerate all known paths under a TDS subtree. */

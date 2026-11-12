@@ -50,3 +50,10 @@ try {
   try {assert.equal((await local.run({args:['main.tex']})).exitCode,0);} finally {await local.dispose();}
   console.log('Node worker transport: ES, CJS, orchestration and timeout passed');
 } finally { await rm(root,{recursive:true,force:true}); }
+
+// Exercise the actual Node CommonJS interop, which Vite unit tests normalize.
+for (const sdk of [await import('../dist/index.js'), createRequire(import.meta.url)('../dist/index.cjs')]) {
+  const bytes = Buffer.from('/Td6WFoAAATm1rRGBMAXEyEBFgAAAAAAAAAAAFRp7t4BABJWZXJpZmllZCBicm93c2VyIFhaAADcXkr9gJI93wABMxPFkVNQH7bzfQEAAAAABFla','base64');
+  assert.equal(new TextDecoder().decode(await sdk.decodePackageXz(bytes)), 'Verified browser XZ');
+}
+console.log('Node ES/CJS lazy XZ decoder passed');

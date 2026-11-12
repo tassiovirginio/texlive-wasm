@@ -54,6 +54,15 @@ export function CompilePanel(props: CompilePanelProps) {
     try {
       const t0 = performance.now();
       const result = await compile({
+        preview: true,
+        onEvent(event) {
+          setStatus(`${event.type}: pass ${event.pass}, ${event.elapsedMs.toFixed(0)} ms`);
+          if (event.type === 'preview' && event.pdf) {
+            const old = pdfUrl();
+            if (old) URL.revokeObjectURL(old);
+            setPdfUrl(URL.createObjectURL(new Blob([event.pdf as BlobPart], {type: 'application/pdf'})));
+          }
+        },
         engine: props.sample.engine,
         mainTex: props.sample.mainTex,
         files: Object.entries(contents()).map(([path, content]) => ({ path, content })),

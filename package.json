@@ -1,7 +1,7 @@
 {
   "name": "@typeward/texlive-wasm",
-  "version": "0.4.0-alpha",
-  "description": "TeX Live in WebAssembly — pdflatex, xelatex, lualatex in browsers and Node. Offline-first, Tauri-friendly.",
+  "version": "0.5.0-alpha",
+  "description": "TeX Live in WebAssembly \u2014 pdflatex, xelatex, lualatex in browsers and Node. Offline-first, Tauri-friendly.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -51,7 +51,10 @@
     "scripts/lib/",
     "README.md",
     "LICENSE",
-    "docs/validation-0.4.0-alpha.md"
+    "docs/validation-0.4.0-alpha.md",
+    "docs/features-0.5.0.md",
+    "docs/development-0.5.0.md",
+    "docs/validation-0.5.0-alpha.md"
   ],
   "bin": {
     "texlive-wasm": "scripts/cli.cjs"
@@ -80,7 +83,10 @@
     "test:node": "npm run build && node test/node-smoke.mjs",
     "test:browser": "playwright test",
     "test:rust": "cargo test --locked --manifest-path rust/Cargo.toml",
-    "check": "npm run lint && npm run typecheck && npm run test:coverage && npm run test:node && npm run test:rust"
+    "check": "npm run lint && npm run typecheck && npm run test:coverage && npm run test:node && npm run test:rust",
+    "fonts:build": "tsx scripts/build-font-packs.ts",
+    "smoke:features": "node scripts/smoke-features.mjs",
+    "smoke:corpus": "node scripts/smoke-corpus.mjs"
   },
   "keywords": [
     "latex",
@@ -100,7 +106,8 @@
     "synctex"
   ],
   "dependencies": {
-    "comlink": "^4.4.2"
+    "comlink": "^4.4.2",
+    "xz-decompress": "0.2.3"
   },
   "peerDependencies": {
     "@tauri-apps/plugin-fs": ">=2.0.0"

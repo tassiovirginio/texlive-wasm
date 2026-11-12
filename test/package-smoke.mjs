@@ -15,7 +15,9 @@ try {
   const preload=join(root,'mock-release.cjs');
   await writeFile(preload,`const fs=require('node:fs');const path=require('node:path');globalThis.fetch=async(url)=>{const name=new URL(url).pathname.split('/').pop();const file=path.join(process.env.TEXLIVE_RELEASE_DIR,name);return fs.existsSync(file)?new Response(fs.readFileSync(file)):new Response(null,{status:404});};`);
   const assets=join(root,'assets');
-  execFileSync(process.execPath,['--require',preload,join(installed,'scripts/cli.cjs'),'download-assets','--assets','pdflatex-emscripten,texmf-core-pdflatex,tex-packages-pdflatex.json',assets],{env:{...process.env,TEXLIVE_RELEASE_DIR:release},stdio:'pipe'});
+  execFileSync(process.execPath,['--require',preload,join(installed,'scripts/cli.cjs'),'download-assets','--assets','pdflatex-emscripten,texmf-core-pdflatex,tex-packages-pdflatex.json,font-packs.json,texmf-font-inconsolata',assets],{env:{...process.env,TEXLIVE_RELEASE_DIR:release},stdio:'pipe'});
+  assert.deepEqual(await readFile(join(assets,'texmf-font-inconsolata.tar.gz')), await readFile(join(release,'texmf-font-inconsolata.tar.gz')));
+  assert.equal(JSON.parse(await readFile(join(assets,'font-packs.json'),'utf8')).version,pkg.version);
   const {createEngine,latexmk}=await import(pathToFileURL(join(installed,'dist/index.js')).href);
   const handle=await createEngine('pdflatex',{enginePath:join(assets,'pdflatex/emscripten/pdflatex.wasm'),manifestUrl:join(assets,'tex-packages-pdflatex.json')});
   try {

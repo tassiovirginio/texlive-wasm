@@ -205,6 +205,9 @@ jobs:
           node scripts/pack-tds.mjs --pack portuguese --no-brotli
           node scripts/pack-tds.mjs --pack multilingual --no-brotli
 
+      - name: build exact-family font packs
+        run: npx tsx scripts/build-font-packs.ts
+
       - name: pack TDS bundles
         run: |
           node scripts/pack-tds.mjs --no-brotli
@@ -218,6 +221,11 @@ jobs:
           node scripts/smoke-quality.mjs
           ls -la engine-artifacts/*.tar.gz
 
+      - name: validate features and original corpus
+        run: |
+          node scripts/smoke-features.mjs
+          node scripts/smoke-corpus.mjs
+
       - name: upload TDS bundles
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -228,6 +236,8 @@ jobs:
             engine-artifacts/*.tar.gz
             engine-artifacts/tex-packages*.json
             engine-artifacts/resource-packs.json
+            engine-artifacts/font-packs.json
+            engine-artifacts/texlive-package-index.json
           # Already gzip — re-deflating hundreds of MB buys nothing.
           compression-level: 0
           retention-days: 7
@@ -316,6 +326,8 @@ jobs:
             release/*.tgz
             release/tex-packages*.json
             release/resource-packs.json
+            release/font-packs.json
+            release/texlive-package-index.json
             release/checksums.json
           fail_on_unmatched_files: true
           generate_release_notes: true

@@ -22,11 +22,32 @@ import { Biber } from '../engines/biber';
 import { Makeindex } from '../engines/makeindex';
 import { diagnose, type CompileDiagnostic } from './diagnostics';
 import { auxiliarySnapshot, bibliographySignature, indexJobs, binaryText } from './state';
+import { analyzeProject, maskTex } from '../project/analyze';
+import { safeRelativePath } from '../core/paths';
 import { Xdvipdfmx } from '../engines/xdvipdfmx';
 
 export type LatexmkEngine = 'pdflatex' | 'xelatex' | 'lualatex';
 
+export interface CompileEvent {
+  type: 'start' | 'prepare' | 'pass' | 'helper' | 'preview' | 'complete';
+  elapsedMs: number;
+  pass: number;
+  command?: string;
+  durationMs?: number;
+  pdf?: Uint8Array;
+  partial: boolean;
+}
 export interface LatexmkOptions {
+  /** Synchronous progress observer; preview buffers are independent copies. */
+  onEvent?: (event: CompileEvent) => void;
+  /** Opt-in intermediate PDFs. Final result still requires convergence. */
+  preview?: boolean;
+  /** Compile selected literal include chapters, explicitly marked partial. */
+  includeOnly?: string[];
+  /** Activate exact font maps shipped with an optional font pack/project. */
+  fontMaps?: string[];
+  /** Static preflight is opt-in; it never rewrites caller sources. */
+  preflight?: boolean;
   engine: LatexmkEngine;
   mainTex: string;
   files: FileInput[];
@@ -100,6 +121,9 @@ export interface LatexmkOptions {
 export interface LatexmkResult extends CompileResult {
   /** Number of TeX engine passes actually run. */
   passes: number;
+  partial: boolean;
+  totalMs: number;
+  timings: { command: string; durationMs: number }[];
   /** False when the final log reports missing content or unresolved references. */
   complete: boolean;
   diagnostics: CompileDiagnostic[];
@@ -130,6 +154,31 @@ const DEFAULT_MAX_PASSES = 4;
 const BIBLATEX_MAX_PASSES = 5;
 
 export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
+  const startedAt = performance.now();
+  const partial = !!opts.includeOnly?.length;
+  const emit = (event: Omit<CompileEvent, 'elapsedMs' | 'partial'>) =>
+    opts.onEvent?.({ ...event, elapsedMs: performance.now() - startedAt, partial });
+  if (
+    (partial || opts.fontMaps?.length) &&
+    (!safeRelativePath(opts.mainTex) ||
+      /[{}\\\s%#$&^~,]/.test(opts.mainTex) ||
+      opts.includeOnly?.some(
+        (path) => safeRelativePath(path) !== path || /[{}\\\s%#$&^~,]/.test(path),
+      ))
+  )
+    throw new Error('Invalid includeOnly paths');
+  if (
+    opts.fontMaps?.some((path) => safeRelativePath(path) !== path || !/^[\w./+-]+\.map$/.test(path))
+  )
+    throw new Error('Invalid font map path');
+  if (opts.preflight) {
+    const analysis = analyzeProject(opts.files, opts.mainTex);
+    const errors = analysis.problems.filter((p) => p.severity === 'error');
+    if (errors.length)
+      throw new Error(
+        'Project preflight: ' + errors.map((p) => `${p.file}:${p.line}: ${p.message}`).join('\n'),
+      );
+  }
   if (opts.timeoutMs !== undefined && (!Number.isFinite(opts.timeoutMs) || opts.timeoutMs < 0))
     throw new Error('Invalid timeoutMs');
   if (
@@ -174,6 +223,24 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
   const needMakeindex = resolveAuto(opts.makeindex, () => willRunMakeindex(sources));
 
   const texExtraArgs = opts.synctex ? ['-synctex=1'] : [];
+  let engineInput = opts.mainTex;
+  const prefix =
+    (partial
+      ? `\\includeonly{${opts.includeOnly!.map((p) => p.replace(/\.tex$/i, '')).join(',')}}`
+      : '') +
+    (opts.fontMaps ?? [])
+      .map((p) =>
+        opts.engine === 'pdflatex'
+          ? `\\pdfmapfile{+${p}}`
+          : opts.engine === 'lualatex'
+            ? `\\pdfextension mapfile{+${p}}`
+            : '',
+      )
+      .join('');
+  if (prefix) {
+    engineInput = prefix + `\\input{${opts.mainTex}}`;
+    texExtraArgs.push(`-jobname=${base}`);
+  }
 
   let lastAux: string | null = null;
   let lastBcf: string | null = null;
@@ -236,7 +303,20 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
   let xdvipdfmxWrapper: Xdvipdfmx | null = null;
 
   const pushLog = (cmd: string, r: RunResult) => {
-    logs.push({ cmd, exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr, log: r.log });
+    emit({
+      type: cmd.startsWith(opts.engine) ? 'pass' : 'helper',
+      pass,
+      command: cmd,
+      durationMs: r.durationMs,
+    });
+    logs.push({
+      cmd,
+      exitCode: r.exitCode,
+      stdout: r.stdout,
+      stderr: r.stderr,
+      log: r.log,
+      durationMs: r.durationMs,
+    });
   };
 
   // The deadline covers the pipeline, not one invocation: each engine call
@@ -288,6 +368,7 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
   };
 
   try {
+    emit({ type: 'start', pass: 0 });
     if (opts.tools) {
       for (const file of await runTools('before')) {
         outputs.set(
@@ -299,7 +380,7 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
     while (pass < maxPasses) {
       pass++;
       const result = await tex.compile({
-        mainTex: opts.mainTex,
+        mainTex: engineInput,
         files: materialize(),
         ...(opts.processEnv ? { processEnv: opts.processEnv } : {}),
         extraArgs: texExtraArgs,
@@ -312,6 +393,24 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
       exitCode = result.exitCode;
       outputs = mergeOutputs(outputs, result.outputs);
       if (exitCode !== 0) break;
+      if (opts.preview && opts.onEvent && !isXetex && outputs.has(pdfPath))
+        emit({ type: 'preview', pass, pdf: outputs.get(pdfPath)!.slice() });
+
+      if (opts.preview && opts.onEvent && isXetex && outputs.has(xdvPath)) {
+        xdvipdfmxWrapper ??= new Xdvipdfmx(
+          wrapperConfig(opts, 'xdvipdfmx', opts.handles?.xdvipdfmx),
+        );
+        const preview = await xdvipdfmxWrapper.run({
+          xdv: xdvPath,
+          pdf: pdfPath,
+          files: materialize(),
+          extraArgs: (opts.fontMaps ?? []).flatMap((map) => ['-f', map]),
+          ...budget(),
+        });
+        pushLog(`xdvipdfmx preview ${pass}`, preview);
+        if (preview.exitCode === 0 && preview.outputs.has(pdfPath))
+          emit({ type: 'preview', pass, pdf: preview.outputs.get(pdfPath)!.slice() });
+      }
 
       let helpersRan = false;
 
@@ -441,6 +540,7 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
       const r = await xdvipdfmxWrapper.run({
         xdv: xdvPath,
         pdf: pdfPath,
+        extraArgs: (opts.fontMaps ?? []).flatMap((map) => ['-f', map]),
         files: materialize(),
         ...budget(),
       });
@@ -492,7 +592,10 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
     }
   }
   const result: LatexmkResult = {
-    complete,
+    partial,
+    totalMs: performance.now() - startedAt,
+    timings: logs.map((log) => ({ command: log.cmd, durationMs: log.durationMs ?? 0 })),
+    complete: complete && !partial,
     diagnostics,
     auxiliaryFiles: [...outputs]
       .filter(([path]) =>
@@ -519,6 +622,12 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
   if (pdf) result.pdf = pdf;
   const synctex = outputs.get(synctexPath);
   if (synctex) result.synctex = synctex;
+  emit({
+    type: 'complete',
+    pass,
+    durationMs: result.totalMs,
+    ...(opts.onEvent && result.pdf ? { pdf: result.pdf.slice() } : {}),
+  });
   return result;
 }
 
@@ -574,7 +683,7 @@ function reachableSources(files: FileInput[], mainTex?: string): FileInput[] {
 /** Source-only heuristic; generated control files remain the authoritative engine inputs. */
 function sourceText(file: FileInput): string {
   if (!/\.(tex|ltx|sty|cls)$/i.test(file.path)) return '';
-  return stripTexComments(contentToString(file.content));
+  return maskTex(contentToString(file.content));
 }
 
 export function stripTexComments(text: string): string {
