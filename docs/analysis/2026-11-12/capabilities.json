@@ -1,0 +1,90 @@
+[
+  {
+    "name": "portuguese",
+    "success": false,
+    "exitCode": 1,
+    "passes": 1,
+    "commands": [
+      "pdflatex main.tex"
+    ],
+    "warnings": [
+      "! Package babel Error: Unknown option 'brazil'. Either you misspelled it",
+      "(babel)                was not found.",
+      "!  ==> Fatal error occurred, no output PDF file produced!"
+    ]
+  },
+  {
+    "name": "abnt",
+    "success": false,
+    "exitCode": 1,
+    "passes": 1,
+    "commands": [
+      "pdflatex main.tex"
+    ],
+    "warnings": [
+      "! LaTeX Error: File `abntex2.cls' not found.",
+      "!  ==> Fatal error occurred, no output PDF file produced!"
+    ]
+  },
+  {
+    "name": "tikz-full",
+    "success": true,
+    "exitCode": 0,
+    "passes": 2,
+    "commands": [
+      "pdflatex main.tex",
+      "pdflatex main.tex"
+    ],
+    "warnings": []
+  },
+  {
+    "name": "glyphs",
+    "success": true,
+    "exitCode": 0,
+    "passes": 2,
+    "commands": [
+      "lualatex main.tex",
+      "lualatex main.tex"
+    ],
+    "warnings": [
+      "luaotfload | db : Font names database not found, generating new one.",
+      "Missing character: There is no 中 (U+4E2D) in font [lmroman10-regular]:+tlig;!",
+      "Missing character: There is no 文 (U+6587) in font [lmroman10-regular]:+tlig;!",
+      "Missing character: There is no 😀 (U+1F600) in font [lmroman10-regular]:+tlig;",
+      "luaotfload | db : Reload initiated (formats: otf,ttf,ttc); reason: File not found: \"lmroman10-regular\".))",
+      "Missing character: There is no 😀 (U+1F600) in font [lmroman10-regular]:+tlig"
+    ]
+  },
+  {
+    "name": "multiple-index",
+    "success": true,
+    "exitCode": 0,
+    "passes": 2,
+    "commands": [
+      "pdflatex main.tex",
+      "pdflatex main.tex"
+    ],
+    "warnings": [
+      "No file people.ind.",
+      "Package imakeidx Warning: Remember to run (pdf)latex again after calling"
+    ]
+  },
+  {
+    "name": "glossary",
+    "success": true,
+    "exitCode": 0,
+    "passes": 2,
+    "commands": [
+      "pdflatex main.tex",
+      "pdflatex main.tex"
+    ],
+    "warnings": [
+      "No file main.gls."
+    ]
+  },
+  {
+    "name": "latex-format-alias",
+    "exitCode": 1,
+    "stdout": "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=latex)\n restricted \\write18 enabled.\n---! /texmf-dist/web2c/pdftex/latex.fmt made by different executable version, strings are different\n(Fatal format file error; I'm stymied)\n"
+  }
+]
