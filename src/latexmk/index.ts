@@ -423,7 +423,10 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
         pendingRerun = true;
         break;
       }
-      seenStates.add(aux);
+      // The current aux was produced before helpers changed the inputs.
+      // Do not compare it with iterations evaluated against the new .bbl/.ind.
+      if (helpersRan) seenStates.clear();
+      else seenStates.add(aux);
       lastAux = aux;
       pendingRerun = helpersRan || rerunRequested || (hadAux && !auxStable);
       converged = !helpersRan && !rerunRequested && (auxStable || rerunMode === false);

@@ -654,3 +654,25 @@ it('does not reuse stale index output after a changed index job produces nothing
   });
   expect(new TextDecoder().decode(r.pdf)).toBe('CLEAN');
 });
+
+it('does not mistake pre-bibliography layout state for a cycle after helper input changes', async () => {
+  const tex = fakeHandle('pdflatex', ({ n }) => ({
+    outputs: {
+      'main.aux': `\\citation{knuth}\n\\newlabel{x}{{1}{${n === 2 ? 'B' : 'A'}}}`,
+      'main.pdf': 'P',
+    },
+  }));
+  const bibtex = fakeHandle('bibtexu', () => ({
+    outputs: { 'main.bbl': 'Bibliography changes page layout' },
+  }));
+  const r = await latexmk({
+    engine: 'pdflatex',
+    mainTex: 'main.tex',
+    files: [{ path: 'main.tex', content: '\\bibliography{refs}' }],
+    handles: { tex, bibtex },
+  });
+  expect(r.passes).toBe(4);
+  expect(r.cycleDetected).toBe(false);
+  expect(r.success).toBe(true);
+  expect(bibtex.calls).toHaveLength(1);
+});
