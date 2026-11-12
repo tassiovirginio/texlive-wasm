@@ -199,6 +199,12 @@ jobs:
       # --no-brotli: the release publishes the gzip only (WebKit has no
       # DecompressionStream('br')), and brotli-11 on this tree costs minutes per
       # bundle — four of them here.
+      - name: build optional language and font packs
+        run: |
+          bash scripts/fetch-resource-packs.sh
+          node scripts/pack-tds.mjs --pack portuguese --no-brotli
+          node scripts/pack-tds.mjs --pack multilingual --no-brotli
+
       - name: pack TDS bundles
         run: |
           node scripts/pack-tds.mjs --no-brotli
@@ -207,6 +213,9 @@ jobs:
           done
           npx tsx scripts/build-release-manifests.ts
           node scripts/smoke-wrapper.mjs pdflatex
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends poppler-utils
+          node scripts/smoke-quality.mjs
           ls -la engine-artifacts/*.tar.gz
 
       - name: upload TDS bundles
@@ -218,6 +227,7 @@ jobs:
           path: |
             engine-artifacts/*.tar.gz
             engine-artifacts/tex-packages*.json
+            engine-artifacts/resource-packs.json
           # Already gzip — re-deflating hundreds of MB buys nothing.
           compression-level: 0
           retention-days: 7
@@ -305,6 +315,7 @@ jobs:
             release/*.dat.gz
             release/*.tgz
             release/tex-packages*.json
+            release/resource-packs.json
             release/checksums.json
           fail_on_unmatched_files: true
           generate_release_notes: true

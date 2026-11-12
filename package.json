@@ -1,6 +1,6 @@
 {
   "name": "@typeward/texlive-wasm",
-  "version": "0.3.1-alpha",
+  "version": "0.4.0-alpha",
   "description": "TeX Live in WebAssembly — pdflatex, xelatex, lualatex in browsers and Node. Offline-first, Tauri-friendly.",
   "license": "MIT",
   "repository": {
@@ -50,7 +50,8 @@
     "scripts/cli.cjs",
     "scripts/lib/",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "docs/validation-0.4.0-alpha.md"
   ],
   "bin": {
     "texlive-wasm": "scripts/cli.cjs"
@@ -115,6 +116,7 @@
     "@types/node": "^20.14.0",
     "@vitest/coverage-v8": "^4.1.12",
     "prettier": "^3.3.0",
+    "solid-js": "^1.9.19",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vite": "^6.4.6",

@@ -33,6 +33,7 @@ export const DEFAULT_RUN_TIMEOUT_MS = 300_000;
 
 /** Per-invocation limits every typed wrapper accepts. */
 export interface RunLimits {
+  processEnv?: Record<string, string>;
   /**
    * Wall-clock ceiling in ms. Default: DEFAULT_RUN_TIMEOUT_MS. `0` disables
    * it. Enforcing it terminates the worker, so the handle (and any wrapper
@@ -46,6 +47,7 @@ export interface RunLimits {
 /** Pick just the limits out of a wrapper's option bag (exactOptionalPropertyTypes). */
 export function limitsOf(options: RunLimits): RunLimits {
   return {
+    ...(options.processEnv ? { processEnv: options.processEnv } : {}),
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     ...(options.signal !== undefined ? { signal: options.signal } : {}),
   };
@@ -107,6 +109,7 @@ export abstract class BaseEngineWrapper {
     const opts: RunOptions = {
       args,
       files,
+      ...(extra.processEnv ? { processEnv: extra.processEnv } : {}),
       cwd: extra.cwd ?? '/project',
     };
     // 0 means "no ceiling"; undefined means "the caller did not think about

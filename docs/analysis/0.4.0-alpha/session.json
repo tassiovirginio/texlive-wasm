@@ -1,0 +1,50 @@
+[
+  {
+    "revision": 0,
+    "incrementalMs": 898.3178969999999,
+    "incrementalPasses": 2,
+    "cleanMs": 467.292287,
+    "cleanPasses": 2,
+    "pdfIdentical": true
+  },
+  {
+    "revision": 1,
+    "incrementalMs": 207.01996599999984,
+    "incrementalPasses": 1,
+    "cleanMs": 440.25566200000003,
+    "cleanPasses": 2,
+    "pdfIdentical": true
+  },
+  {
+    "revision": 2,
+    "incrementalMs": 238.54917400000022,
+    "incrementalPasses": 1,
+    "cleanMs": 398.51962200000025,
+    "cleanPasses": 2,
+    "pdfIdentical": true
+  },
+  {
+    "revision": 3,
+    "incrementalMs": 163.51745699999992,
+    "incrementalPasses": 1,
+    "cleanMs": 376.1968230000002,
+    "cleanPasses": 2,
+    "pdfIdentical": true
+  },
+  {
+    "revision": 4,
+    "incrementalMs": 252.68595099999993,
+    "incrementalPasses": 1,
+    "cleanMs": 352.2317410000005,
+    "cleanPasses": 2,
+    "pdfIdentical": true
+  },
+  {
+    "revision": 5,
+    "incrementalMs": 158.2658680000004,
+    "incrementalPasses": 1,
+    "cleanMs": 332.1260460000003,
+    "cleanPasses": 2,
+    "pdfIdentical": true
+  }
+]

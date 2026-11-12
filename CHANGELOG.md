@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.0-alpha
+
+- Add structured content diagnostics, strict compilation and byte-exact convergence across chapter auxiliaries, contents, bookmarks and navigation; detect oscillating states.
+- Compile named indexes, makeindex glossaries and acronym lists, and prevent stale helper outputs from reappearing.
+- Add incremental project sessions with worker/helper reuse, conservative invalidation and shared initialization/compilation deadlines; use strict sessions in the showcase.
+- Cache filesystem mounting plans and filename databases, overlap startup downloads, deduplicate lazy-fetch attempts and preserve fontconfig caches.
+- Invalidate font caches when project fonts change, expose real libc environment overrides and reject ICU initialization errors.
+- Regenerate the DVI LaTeX format, remove its unused copy from the pdfLaTeX core, and include Latin Modern/EC support needed by common fontenc documents.
+- Preload Portuguese hyphenation and publish integrity-pinned Portuguese/ABNT and Unicode Noto/Arabic/CJK resource packs with required ABNT dependencies.
+- Retain contributed bibliography styles in full TDS and publish explicit engine/package compatibility metadata.
+- Add cancellable host-tool phases for converters, highlighting, auxiliary tools and PDF validation without shell escape.
+- Add real-engine content and native-PDF fidelity gates, session benchmarks and application migration documentation.
+
 ## 0.3.1-alpha
 
 - Pin CI to Ubuntu 24.04 so browser dependencies remain compatible with the validated Playwright version.

@@ -390,3 +390,194 @@ it('honors explicit format selection and reads logs from a confined custom cwd',
   });
   expect(result.log).toBe('custom log');
 });
+
+describe('worker environment and persistent caches', () => {
+  it('sets real process variables on every fresh instance before main', async () => {
+    const values: string[] = [];
+    globalThis.__texliveFakeFactory = async () => {
+      const module = createFakeModule({ callMain: producesPdf });
+      instances.push(module);
+      return Object.assign(module, {
+        _texlive_setenv: (key: number, value: number) => {
+          const cstr = (p: number) =>
+            new TextDecoder().decode(module.HEAPU8.subarray(p, module.HEAPU8.indexOf(0, p)));
+          values.push(cstr(key) + '=' + cstr(value));
+          return 0;
+        },
+      });
+    };
+    const { host, meta } = hostFor(tdsMap());
+    const worker = new WorkerImpl();
+    await worker.init({ engineId: 'pdflatex', config: { enginePath }, backendMeta: meta }, host);
+    await worker.run({ args: ['main.tex'], processEnv: { SOURCE_DATE_EPOCH: '946684800' } });
+    await worker.run({ args: ['main.tex'], processEnv: { FORCE_SOURCE_DATE: '1' } });
+    expect(values).toEqual(['SOURCE_DATE_EPOCH=946684800', 'FORCE_SOURCE_DATE=1']);
+    await expect(
+      worker.run({ args: ['main.tex'], processEnv: { 'bad=key': 'value' } }),
+    ).rejects.toThrow('Invalid process');
+    await expect(
+      worker.run({ args: ['main.tex'], processEnv: { GOOD: 'bad\0value' } }),
+    ).rejects.toThrow('Invalid process');
+  });
+  it('fails explicitly when an older artifact cannot apply processEnv', async () => {
+    installEngine({ callMain: producesPdf });
+    const { host, meta } = hostFor(tdsMap());
+    const worker = new WorkerImpl();
+    await worker.init({ engineId: 'pdflatex', config: { enginePath }, backendMeta: meta }, host);
+    await expect(
+      worker.run({ args: ['main.tex'], processEnv: { SOURCE_DATE_EPOCH: '1' } }),
+    ).rejects.toThrow('requires an engine');
+  });
+  it('persists fontconfig caches between XeTeX instances and clears them on dispose', async () => {
+    let count = 0;
+    installEngine({
+      callMain: (_args, fs) => {
+        if (count++) expect(dec(fs.readFile('/tmp/fontcache/fonts.cache'))).toBe('CACHE');
+        fs.writeFile('/tmp/fontcache/fonts.cache', 'CACHE');
+        return 0;
+      },
+    });
+    const { host, meta } = hostFor(new Map([['web2c/xetex/xelatex.fmt', enc('FMT')]]));
+    const worker = new WorkerImpl();
+    await worker.init({ engineId: 'xelatex', config: { enginePath }, backendMeta: meta }, host);
+    await worker.run({ args: ['main.tex'] });
+    await worker.run({ args: ['main.tex'] });
+    expect(count).toBe(2);
+    await worker.dispose();
+  });
+  it('rejects positive ICU errors while accepting negative warning statuses', async () => {
+    let status = 3;
+    globalThis.__texliveFakeFactory = async () => {
+      const module = createFakeModule({ callMain: producesPdf });
+      instances.push(module);
+      return Object.assign(module, {
+        _udata_setCommonData_78: (_data: number, err: number) => {
+          module.HEAPU32[err >> 2] = status;
+        },
+      });
+    };
+    const { host, meta } = hostFor(tdsMap());
+    const worker = new WorkerImpl();
+    await worker.init(
+      { engineId: 'pdflatex', config: { enginePath }, backendMeta: meta, icuData: enc('ICU') },
+      host,
+    );
+    await expect(worker.run({ args: ['main.tex'] })).rejects.toThrow('ICU data initialization');
+    status = -1;
+    expect((await worker.run({ args: ['main.tex'] })).exitCode).toBe(0);
+  });
+});
+
+it('adds integrity-pinned resource packs while retaining base TDS precedence', async () => {
+  const { buildTar } = await import('./helpers');
+  const { gzipSync } = await import('node:zlib');
+  const { createHash } = await import('node:crypto');
+  const bytes = gzipSync(
+    buildTar([
+      { path: 'texmf/tex/latex/base/article.cls', content: 'PACK CLASS' },
+      { path: 'texmf/tex/generic/babel-portuges/brazil.ldf', content: 'PORTUGUESE' },
+    ]),
+  );
+  const path = join(tmp, 'language.tar.gz');
+  writeFileSync(path, bytes);
+  installEngine({
+    callMain: (_args, fs) => {
+      expect(dec(fs.readFile('/texmf-dist/tex/latex/base/article.cls'))).toBe('CLASS BYTES');
+      expect(dec(fs.readFile('/texmf-dist/tex/generic/babel-portuges/brazil.ldf'))).toBe(
+        'PORTUGUESE',
+      );
+      return 0;
+    },
+  });
+  const { host, meta } = hostFor(tdsMap());
+  const worker = new WorkerImpl();
+  // The explicit host backend is after additive packs; a configured base bundle
+  // is the authoritative first layer. Put its bytes in a tiny base bundle.
+  const base = gzipSync(
+    buildTar([
+      { path: 'texmf/tex/latex/base/article.cls', content: 'CLASS BYTES' },
+      { path: 'texmf/web2c/pdftex/pdflatex.fmt', content: 'FMT' },
+    ]),
+  );
+  const basePath = join(tmp, 'base.tar.gz');
+  writeFileSync(basePath, base);
+  await worker.init(
+    {
+      engineId: 'pdflatex',
+      config: {
+        enginePath,
+        bundleUrl: pathToFileURL(basePath).href,
+        resourcePacks: [
+          {
+            url: pathToFileURL(path).href,
+            sha256: createHash('sha256').update(bytes).digest('hex'),
+          },
+        ],
+      },
+      backendMeta: meta,
+    },
+    host,
+  );
+  expect((await worker.run({ args: ['main.tex'] })).exitCode).toBe(0);
+  const bad = new WorkerImpl();
+  await expect(
+    bad.init({
+      engineId: 'pdflatex',
+      config: {
+        enginePath,
+        resourcePacks: [{ url: pathToFileURL(path).href, sha256: '0'.repeat(64) }],
+      },
+    }),
+  ).rejects.toThrow(/SHA-256|integrity|hash/i);
+});
+
+it('invalidates engine font caches when a project font changes at the same path', async () => {
+  const seen: boolean[] = [];
+  installEngine({
+    callMain: (_args, fs) => {
+      try {
+        fs.stat('/tmp/texmf-var/font.cache');
+        seen.push(true);
+      } catch {
+        seen.push(false);
+      }
+      fs.writeFile('/tmp/texmf-var/font.cache', 'cached metrics');
+      return 0;
+    },
+  });
+  const { host, meta } = hostFor(tdsMap());
+  const worker = new WorkerImpl();
+  await worker.init({ engineId: 'pdflatex', config: { enginePath }, backendMeta: meta }, host);
+  for (const content of ['FONT-A', 'FONT-A', 'FONT-B'])
+    await worker.run({ args: ['main.tex'], files: [{ path: 'font.otf', content }] });
+  expect(seen).toEqual([false, true, false]);
+  await worker.dispose();
+});
+it('resolves a missing babel language definition through the fallback backend', async () => {
+  installEngine({
+    callMain: (_args, fs) => {
+      try {
+        fs.stat('/texmf-dist/tex/generic/babel-portuges/brazil.ldf');
+        return 0;
+      } catch {
+        fs.writeFile(
+          '/project/main.log',
+          '! Package babel Error: Unknown option brazil\n(babel) or the language definition file brazil.ldf\n(babel) was not found.',
+        );
+        return 1;
+      }
+    },
+  });
+  const { host, meta } = hostFor(tdsMap());
+  const originalRead = host.read;
+  host.read = async (index, path) =>
+    path === 'tex/generic/babel-portuges/brazil.ldf'
+      ? enc('PORTUGUESE')
+      : originalRead(index, path);
+  const worker = new WorkerImpl();
+  await worker.init({ engineId: 'pdflatex', config: { enginePath }, backendMeta: meta }, host);
+  const r = await worker.run({ args: ['main.tex'] });
+  expect(r.exitCode).toBe(0);
+  expect(r.lazyFetchRetries).toBe(1);
+  await worker.dispose();
+});

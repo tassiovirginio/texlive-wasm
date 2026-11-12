@@ -405,7 +405,9 @@ it('reports convergence for stable auxiliary files', async () => {
 it('reruns BibTeX when citations change after the first TeX pass', async () => {
   const tex = fakeHandle('pdflatex', ({ n, files }) => {
     if (n === 3) expect(files.get('main.bbl')).toBe('BBL-2');
-    return { outputs: { 'main.aux': n === 1 ? 'citation A' : 'citation B', 'main.pdf': 'PDF' } };
+    return {
+      outputs: { 'main.aux': n === 1 ? '\\citation{A}' : '\\citation{B}', 'main.pdf': 'PDF' },
+    };
   });
   const bibtex = fakeHandle('bibtexu', ({ n }) => ({ outputs: { 'main.bbl': `BBL-${n}` } }));
   const result = await latexmk({
@@ -440,4 +442,215 @@ it('accepts an explicit disabled pipeline deadline', async () => {
       })
     ).success,
   ).toBe(true);
+});
+
+it('tracks chapter auxiliaries and toc independently of the main aux', async () => {
+  const tex = fakeHandle('pdflatex', ({ n }) => ({
+    outputs: {
+      'main.aux': 'same',
+      'chapter.aux': n === 1 ? 'old' : 'new',
+      'main.toc': n < 3 ? 'old' : 'new',
+      'main.pdf': 'P',
+    },
+  }));
+  const r = await latexmk({
+    engine: 'pdflatex',
+    mainTex: 'main.tex',
+    files: [],
+    handles: { tex },
+    rerun: { maxPasses: 5 },
+  });
+  expect(r.passes).toBe(4);
+  expect(r.converged).toBe(true);
+});
+it('makes missing content visible and optionally fails strictly', async () => {
+  const tex = fakeHandle('lualatex', () => ({
+    outputs: {
+      'main.aux': 'same',
+      'main.pdf': 'P',
+      'main.log': 'Missing character: There is no 中 in font Latin Modern!\nNo file main.gls.',
+    },
+  }));
+  const opts = { engine: 'lualatex' as const, mainTex: 'main.tex', files: [], handles: { tex } };
+  const r = await latexmk(opts);
+  expect(r.success).toBe(true);
+  expect(r.complete).toBe(false);
+  expect(r.diagnostics.map((d) => d.code)).toEqual(['missing-character', 'missing-output']);
+  expect((await latexmk({ ...opts, strict: true })).success).toBe(false);
+});
+it('runs every named index and glossary with its generated style and extensions', async () => {
+  const tex = fakeHandle('pdflatex', ({ files }) => ({
+    outputs: {
+      'main.aux': '\\@newglossary{main}{glg}{gls}{glo}\n\\@istfilename{main.ist}',
+      'main.ist': 'STYLE',
+      'people.idx': 'people',
+      'places.idx': 'places',
+      'main.glo': 'glossary',
+      'main.pdf': files.has('main.gls') ? 'COMPLETE' : 'INCOMPLETE',
+    },
+  }));
+  const index = fakeHandle('makeindex', ({ args, files }) => {
+    const input = args.at(-1)!;
+    const output = args[args.indexOf('-o') + 1]!;
+    if (input === 'main.glo') {
+      expect(files.get('main.ist')).toBe('STYLE');
+      expect(args).toContain('-s');
+    }
+    return { outputs: { [output]: 'INDEX' } };
+  });
+  const r = await latexmk({
+    engine: 'pdflatex',
+    mainTex: 'main.tex',
+    files: [{ path: 'main.tex', content: '\\makeindex' }],
+    handles: { tex, makeindex: index },
+  });
+  expect(index.calls).toHaveLength(3);
+  expect(new TextDecoder().decode(r.pdf)).toBe('COMPLETE');
+  expect(r.success).toBe(true);
+});
+it('does not rerun BibTeX for page-label-only changes', async () => {
+  const tex = fakeHandle('pdflatex', ({ n }) => ({
+    outputs: {
+      'main.aux': `\\citation{A}\n\\newlabel{x}{{1}{${Math.min(n, 2)}}}`,
+      'main.pdf': 'P',
+    },
+  }));
+  const bibtex = fakeHandle('bibtexu', () => ({ outputs: { 'main.bbl': 'BBL' } }));
+  await latexmk({
+    engine: 'pdflatex',
+    mainTex: 'main.tex',
+    files: [{ path: 'main.tex', content: '\\bibliography{refs}' }],
+    handles: { tex, bibtex },
+  });
+  expect(bibtex.calls).toHaveLength(1);
+});
+it('calls explicit host tools before compilation and after the final PDF', async () => {
+  const tex = fakeHandle('pdflatex', ({ files }) => {
+    expect(files.has('converted.pdf')).toBe(true);
+    return { outputs: { 'main.aux': 'A', 'main.pdf': 'P' } };
+  });
+  const phases: string[] = [];
+  const r = await latexmk({
+    engine: 'pdflatex',
+    mainTex: 'main.tex',
+    files: [],
+    handles: { tex },
+    tools: async (ctx) => {
+      phases.push(ctx.phase);
+      if (ctx.phase === 'after') expect(ctx.files.some((f) => f.path === 'main.pdf')).toBe(true);
+      return ctx.phase === 'before' ? [{ path: 'converted.pdf', content: 'converted' }] : [];
+    },
+  });
+  expect(r.success).toBe(true);
+  expect(phases).toEqual(['before', 'auxiliary', 'auxiliary', 'after']);
+});
+
+it('stops oscillating chapter auxiliaries with an explicit diagnostic', async () => {
+  const tex = fakeHandle('pdflatex', ({ n }) => ({
+    outputs: { 'main.aux': n % 2 ? 'A' : 'B', 'main.pdf': 'P' },
+  }));
+  const r = await latexmk({
+    engine: 'pdflatex',
+    mainTex: 'main.tex',
+    files: [],
+    handles: { tex },
+    rerun: { maxPasses: 8 },
+  });
+  expect(r.success).toBe(false);
+  expect(r.cycleDetected).toBe(true);
+  expect(r.passes).toBe(3);
+  expect(r.maxPassesReached).toBe(false);
+});
+it('uses a validated incremental aux seed for a single unchanged pass', async () => {
+  const tex = fakeHandle('pdflatex', () => ({ outputs: { 'main.pdf': 'P' } }));
+  const r = await latexmk({
+    engine: 'pdflatex',
+    mainTex: 'main.tex',
+    files: [{ path: 'main.aux', content: 'A' }],
+    incremental: true,
+    handles: { tex },
+  });
+  expect(r.success).toBe(true);
+  expect(r.passes).toBe(1);
+  expect(r.auxiliaryFiles.some((f) => f.path === 'main.aux')).toBe(true);
+});
+
+it('feeds custom host-generated glossary files into the next TeX pass', async () => {
+  const tex = fakeHandle('pdflatex', ({ files }) => ({
+    outputs: {
+      'main.aux': 'A',
+      'main.glo': 'G',
+      'main.pdf': files.has('main.gls') ? 'COMPLETE' : 'INCOMPLETE',
+    },
+  }));
+  const r = await latexmk({
+    engine: 'pdflatex',
+    mainTex: 'main.tex',
+    files: [],
+    handles: { tex },
+    tools: async (context) =>
+      context.phase === 'auxiliary' ? [{ path: 'main.gls', content: 'HOST GLOSSARY' }] : [],
+  });
+  expect(r.success).toBe(true);
+  expect(new TextDecoder().decode(r.pdf)).toBe('COMPLETE');
+  expect(r.passes).toBe(2);
+});
+
+it('bounds a host hook that never resolves and aborts its signal', async () => {
+  const tex = fakeHandle('pdflatex', () => ({ outputs: { 'main.pdf': 'P' } }));
+  let signal: AbortSignal | undefined;
+  await expect(
+    latexmk({
+      engine: 'pdflatex',
+      mainTex: 'main.tex',
+      files: [],
+      handles: { tex },
+      timeoutMs: 15,
+      tools: async (ctx) => {
+        signal = ctx.signal;
+        return new Promise(() => {});
+      },
+    }),
+  ).rejects.toThrow('host tools exceeded');
+  expect(signal?.aborted).toBe(true);
+  expect(tex.calls).toHaveLength(0);
+});
+it('propagates cancellation to a pending host hook', async () => {
+  const tex = fakeHandle('pdflatex', () => ({ outputs: { 'main.pdf': 'P' } }));
+  const abort = new AbortController();
+  const result = latexmk({
+    engine: 'pdflatex',
+    mainTex: 'main.tex',
+    files: [],
+    handles: { tex },
+    signal: abort.signal,
+    tools: async () => {
+      setTimeout(() => abort.abort(), 1);
+      return new Promise(() => {});
+    },
+  });
+  await expect(result).rejects.toThrow('host tools aborted');
+});
+it('does not reuse stale index output after a changed index job produces nothing', async () => {
+  const tex = fakeHandle('pdflatex', ({ n, files }) => ({
+    outputs: {
+      'main.aux': 'A',
+      'main.idx': n === 1 ? 'new index' : 'new index',
+      'main.pdf': files.has('main.ind') ? 'STALE' : 'CLEAN',
+    },
+  }));
+  const index = fakeHandle('makeindex', ({ files }) => {
+    expect(files.has('main.ind')).toBe(false);
+    return { outputs: {} };
+  });
+  const r = await latexmk({
+    engine: 'pdflatex',
+    mainTex: 'main.tex',
+    files: [
+      { path: 'main.tex', content: '\\makeindex' },
+      { path: 'main.ind', content: 'OLD' },
+    ],
+    handles: { tex, makeindex: index },
+  });
+  expect(new TextDecoder().decode(r.pdf)).toBe('CLEAN');
 });

@@ -9,6 +9,7 @@
 # - Computer Modern + Latin Modern font basics
 
 tex/latex/base/**
+tex/latex/lm/**
 tex/latex/tools/**
 tex/latex/required/**
 tex/latex/amsmath/**
@@ -69,6 +70,7 @@ tex/plain/**
 # Core font metrics + maps. The updmap-generated pdftex.map/psfonts.map are
 # REQUIRED — without them pdfTeX dies at PDF finalization.
 fonts/tfm/public/cm/**
+fonts/tfm/jknappen/ec/**
 fonts/tfm/public/amsfonts/**
 fonts/tfm/public/lm/**
 fonts/vf/public/lm/**

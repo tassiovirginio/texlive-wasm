@@ -43,7 +43,7 @@ const MIN_WASM_BYTES = 64 * 1024;
 // eagerly. Requiring the lazy entry points there would fail every build.
 const LAZY_EXEMPT_ENGINES = new Set(['biber']);
 
-const LAZY_EXPORTS = ['_texlive_mount_lazy', '_texlive_touch'];
+const LAZY_EXPORTS = ['_texlive_mount_lazy', '_texlive_touch', '_texlive_setenv'];
 
 function usage() {
   process.stderr.write(

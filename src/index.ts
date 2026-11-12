@@ -58,3 +58,11 @@ export type { DefaultBackendsOptions } from './vfs';
 export type { TexPackagesManifest, ManifestEntry, ManifestTier } from './core/manifest';
 
 export type { SynctexLookup, SynctexForwardHit, SynctexReverseHit } from './synctex';
+
+export { createCompileSession } from './latexmk/session';
+export type {
+  CompileSession,
+  CompileSessionOptions,
+  SessionCompileOptions,
+} from './latexmk/session';
+export type { CompileDiagnostic } from './latexmk/diagnostics';

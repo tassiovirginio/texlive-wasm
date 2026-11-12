@@ -34,70 +34,79 @@ function walk(FS, absDir, mfsDir) {
     const abs = join(absDir, name);
     const mfs = mfsDir + '/' + name;
     let st;
-    try { st = statSync(abs); } catch { continue; }
+    try {
+      st = statSync(abs);
+    } catch {
+      continue;
+    }
     if (st.isDirectory()) walk(FS, abs, mfs);
     else if (st.isFile()) {
-      try { FS.writeFile(mfs, readFileSync(abs)); } catch {}
+      try {
+        FS.writeFile(mfs, readFileSync(abs));
+      } catch {}
     }
   }
 }
 
-const Module = await m.default({
-  noInitialRun: true,
-  thisProgram: '/bin/pdflatex',
-  print: (t) => process.stdout.write(t + '\n'),
-  printErr: (t) => process.stderr.write(t + '\n'),
-});
+for (const format of ['pdflatex', 'latex']) {
+  const Module = await m.default({
+    noInitialRun: true,
+    thisProgram: '/bin/pdflatex',
+    print: (t) => process.stdout.write(t + '\n'),
+    printErr: (t) => process.stderr.write(t + '\n'),
+  });
 
-walk(Module.FS, TEXMF, '/texmf-dist');
-Module.FS.mkdir('/bin');
-Module.FS.writeFile('/bin/pdflatex', new Uint8Array());
-Module.FS.mkdir('/work');
-Module.FS.chdir('/work');
+  walk(Module.FS, TEXMF, '/texmf-dist');
+  Module.FS.mkdir('/bin');
+  Module.FS.writeFile('/bin/pdflatex', new Uint8Array());
+  Module.FS.mkdir('/work');
+  Module.FS.chdir('/work');
 
-console.error('[build-fmt] building pdflatex.fmt with wasm pdflatex...');
-const t0 = Date.now();
-let exitCode;
-try {
-  exitCode = Module.callMain([
-    '-ini', '-etex',
-    '-interaction=nonstopmode',
-    '-jobname=pdflatex',
-    '-output-format=dvi',
-    '-cnf-line=TEXMFCNF=/texmf-dist/web2c',
-    '-cnf-line=TEXMF=/texmf-dist',
-    '-cnf-line=TEXMFDIST=/texmf-dist',
-    '-cnf-line=TEXINPUTS=.;/texmf-dist/tex//',
-    '-cnf-line=TFMFONTS=/texmf-dist/fonts/tfm//',
-    '/texmf-dist/tex/latex/tex-ini-files/pdflatex.ini',
-  ]);
-} catch (e) {
-  exitCode = e?.status ?? -1;
+  console.error('[build-fmt] building pdflatex.fmt with wasm pdflatex...');
+  const t0 = Date.now();
+  let exitCode;
+  try {
+    exitCode = Module.callMain([
+      '-ini',
+      '-etex',
+      '-interaction=nonstopmode',
+      `-jobname=${format}`,
+      '-output-format=dvi',
+      '-cnf-line=TEXMFCNF=/texmf-dist/web2c',
+      '-cnf-line=TEXMF=/texmf-dist',
+      '-cnf-line=TEXMFDIST=/texmf-dist',
+      '-cnf-line=TEXINPUTS=.;/texmf-dist/tex//',
+      '-cnf-line=TFMFONTS=/texmf-dist/fonts/tfm//',
+      `/texmf-dist/tex/latex/tex-ini-files/${format}.ini`,
+    ]);
+  } catch (e) {
+    exitCode = e?.status ?? -1;
+  }
+  console.error(`[build-fmt] exit=${exitCode} in ${Date.now() - t0}ms`);
+
+  // The .fmt existing is not proof of a good build: -interaction=nonstopmode
+  // carries on past errors and still dumps a format made from a half-loaded
+  // latex.ltx, which then fails at compile time on a user's machine. Gate on the
+  // engine's exit status and on the log the engine actually wrote.
+  const log = readLog(Module, `/work/${format}.log`);
+  const problems = [];
+  if (exitCode !== 0) problems.push(`engine exited with ${exitCode}`);
+  problems.push(...fatalMarkers(log));
+  if (!Module.FS.analyzePath(`/work/${format}.fmt`).exists) problems.push('no fmt produced');
+
+  if (problems.length > 0) {
+    console.error('[build-fmt] FAILED:');
+    for (const p of problems) console.error(`  - ${p}`);
+    if (log) console.error(log.slice(-2000));
+    process.exit(1);
+  }
+
+  const fmt = Module.FS.readFile(`/work/${format}.fmt`);
+  const outPath = join(TEXMF, `web2c/pdftex/${format}.fmt`);
+  mkdirSync(dirname(outPath), { recursive: true });
+  writeFileSync(outPath, fmt);
+  console.error(`[build-fmt] wrote ${outPath} (${fmt.length} bytes)`);
 }
-console.error(`[build-fmt] exit=${exitCode} in ${Date.now() - t0}ms`);
-
-// The .fmt existing is not proof of a good build: -interaction=nonstopmode
-// carries on past errors and still dumps a format made from a half-loaded
-// latex.ltx, which then fails at compile time on a user's machine. Gate on the
-// engine's exit status and on the log the engine actually wrote.
-const log = readLog(Module, '/work/pdflatex.log');
-const problems = [];
-if (exitCode !== 0) problems.push(`engine exited with ${exitCode}`);
-problems.push(...fatalMarkers(log));
-if (!Module.FS.analyzePath('/work/pdflatex.fmt').exists) problems.push('no fmt produced');
-
-if (problems.length > 0) {
-  console.error('[build-fmt] FAILED:');
-  for (const p of problems) console.error(`  - ${p}`);
-  if (log) console.error(log.slice(-2000));
-  process.exit(1);
-}
-
-const fmt = Module.FS.readFile('/work/pdflatex.fmt');
-const outPath = join(TEXMF, 'web2c/pdftex/pdflatex.fmt');
-mkdirSync(dirname(outPath), { recursive: true });
-writeFileSync(outPath, fmt);
-console.error(`[build-fmt] wrote ${outPath} (${fmt.length} bytes)`);
 
 function readLog(mod, path) {
   if (!mod.FS.analyzePath(path).exists) return '';

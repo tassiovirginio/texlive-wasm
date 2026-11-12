@@ -1,26 +1,7 @@
 /**
- * latexmk-style driver — multi-pass orchestration.
- *
- * Re-implements the small subset of latexmk's logic we actually need:
- *   1. Run the TeX engine.
- *   2. If `bibtex: 'auto'` and the document contains classic
- *      `\bibliography{…}` — or uses biblatex with `backend=bibtex` — run
- *      bibtexu against the .aux (with biblatex's required `--wolfgang`
- *      capacity mode in the latter case). biblatex documents on the
- *      default biber backend are left alone until biber.wasm ships.
- *   3. If `makeindex: 'auto'` and an .idx was produced (or changed), run
- *      makeindex.
- *   4. Re-run the TeX engine until `.aux` stabilizes (max 4 passes) and no
- *      "Rerun to get cross-references right" message appears in the log.
- *   5. For xelatex, run xdvipdfmx on the resulting .xdv.
- *   6. Collect outputs (.pdf, .synctex.gz, .log).
- *
- * Each engine runs in its own worker with an isolated filesystem that is
- * wiped on every run, so the accumulated project state (sources + generated
- * .aux/.bbl/.idx/.ind/.xdv) is re-materialized into every invocation.
- *
- * Single source of truth for the compile pipeline. Engine wrappers (PdfLatex,
- * XeLatex, LuaLatex) handle individual invocations.
+ * Multi-pass TeX orchestration with bibliography, named indexes, makeindex
+ * glossaries, convergence diagnostics and explicit host-tool integrations.
+ * Fresh engine instances receive the current project state on each pass.
  */
 
 import type {
@@ -39,6 +20,8 @@ import { LuaLatex } from '../engines/lualatex';
 import { Bibtexu } from '../engines/bibtexu';
 import { Biber } from '../engines/biber';
 import { Makeindex } from '../engines/makeindex';
+import { diagnose, type CompileDiagnostic } from './diagnostics';
+import { auxiliarySnapshot, bibliographySignature, indexJobs, binaryText } from './state';
 import { Xdvipdfmx } from '../engines/xdvipdfmx';
 
 export type LatexmkEngine = 'pdflatex' | 'xelatex' | 'lualatex';
@@ -67,6 +50,21 @@ export interface LatexmkOptions {
    */
   biber?: boolean | 'auto';
   makeindex?: boolean | 'auto';
+  /** Run makeindex-based glossaries/acronyms (default: auto). */
+  glossaries?: boolean | 'auto';
+  /** Fail success when content diagnostics are present. Default: false. */
+  strict?: boolean;
+  /** Seeded auxiliaries match the previous successful project revision (sessions set this). */
+  incremental?: boolean;
+  /** Real process variables passed to the engine before startup. */
+  processEnv?: Record<string, string>;
+  /** Explicit host integration for converters, highlighters or validators. No shell is spawned. */
+  tools?: (context: {
+    phase: 'before' | 'auxiliary' | 'after';
+    files: FileInput[];
+    signal?: AbortSignal;
+    timeoutMs?: number;
+  }) => Promise<FileInput[]>;
   /**
    * Re-run for cross-refs/TOC. 'auto' (default) stops when .aux stabilizes;
    * false forces a single pass; { maxPasses } caps the loop.
@@ -102,10 +100,17 @@ export interface LatexmkOptions {
 export interface LatexmkResult extends CompileResult {
   /** Number of TeX engine passes actually run. */
   passes: number;
+  /** False when the final log reports missing content or unresolved references. */
+  complete: boolean;
+  diagnostics: CompileDiagnostic[];
+  /** Generated reusable control files, never PDF/log or caller sources. */
+  auxiliaryFiles: FileInput[];
   /** Whether auxiliary files stabilized without a rerun request. */
   converged: boolean;
   /** The pass cap prevented the requested convergence. */
   maxPassesReached: boolean;
+  /** An auxiliary state oscillated instead of converging. */
+  cycleDetected: boolean;
 }
 
 const RERUN_PATTERNS = [
@@ -139,7 +144,6 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
   const base = stripExt(opts.mainTex).split('/').pop()!;
   const auxPath = `${base}.aux`;
   const bcfPath = `${base}.bcf`;
-  const idxPath = `${base}.idx`;
   const xdvPath = `${base}.xdv`;
   const pdfPath = `${base}.pdf`;
   const logPath = `${base}.log`;
@@ -174,19 +178,51 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
   let lastAux: string | null = null;
   let lastBcf: string | null = null;
   let lastBibAux: string | null = null;
-  let lastIdx: string | null = null;
+  const lastIndexes = new Map<string, string>();
   let pass = 0;
   let converged = false;
+  let cycleDetected = false;
+  const seenStates = new Set<string>();
   let pendingRerun = false;
   let exitCode = 0;
-  let outputs = new Map<string, Uint8Array>();
+  let outputs = new Map<string, Uint8Array>(
+    opts.files
+      .filter((f) =>
+        /\.(aux|toc|out|nav|snm|lof|lot|lol|bbl|bcf|run\.xml|idx|ind|glo|gls|acn|acr|ist)$/.test(
+          f.path,
+        ),
+      )
+      .map((f) => [
+        f.path,
+        typeof f.content === 'string' ? new TextEncoder().encode(f.content) : f.content,
+      ]),
+  );
+
+  if (opts.incremental && outputs.has(auxPath)) {
+    lastAux = auxiliarySnapshot(outputs);
+    if (outputs.has(`${base}.bbl`)) {
+      lastBibAux = bibliographySignature(outputs, auxPath);
+      lastBcf = binaryText(outputs.get(bcfPath));
+    }
+    for (const job of indexJobs(outputs, needMakeindex, opts.glossaries !== false)) {
+      if (outputs.has(job.output))
+        lastIndexes.set(
+          job.input,
+          binaryText(outputs.get(job.input)) + '\0' + binaryText(outputs.get(job.style ?? '')),
+        );
+    }
+  }
 
   // Everything the next engine invocation needs on disk: the caller's
   // sources overlaid with all generated files so far (fresh .aux/.bbl/.ind
   // win over any same-named input).
+  const removedOutputs = new Set<string>();
   const materialize = (): FileInput[] => {
     const merged = new Map<string, FileInput>();
-    for (const f of opts.files) merged.set(f.path.replace(/^\/+/, ''), f);
+    for (const f of opts.files) {
+      const path = f.path.replace(/^\/+/, '');
+      if (!removedOutputs.has(path)) merged.set(path, f);
+    }
     for (const [path, content] of outputs) merged.set(path, { path, content });
     return [...merged.values()];
   };
@@ -221,12 +257,51 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
     return limits;
   };
 
+  const runTools = async (phase: 'before' | 'auxiliary' | 'after'): Promise<FileInput[]> => {
+    if (!opts.tools) return [];
+    const limits = budget();
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let abort: (() => void) | undefined;
+    const stopped = new Promise<never>((_, reject) => {
+      abort = () => {
+        controller.abort();
+        reject(new Error('latexmk: host tools aborted'));
+      };
+      opts.signal?.addEventListener('abort', abort, { once: true });
+      if (opts.signal?.aborted) abort();
+      if (limits.timeoutMs && limits.timeoutMs > 0)
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error('latexmk: host tools exceeded timeoutMs'));
+        }, limits.timeoutMs);
+    });
+    try {
+      return await Promise.race([
+        opts.tools({ phase, files: materialize(), ...limits, signal: controller.signal }),
+        stopped,
+      ]);
+    } finally {
+      clearTimeout(timer);
+      if (abort) opts.signal?.removeEventListener('abort', abort);
+    }
+  };
+
   try {
+    if (opts.tools) {
+      for (const file of await runTools('before')) {
+        outputs.set(
+          file.path,
+          typeof file.content === 'string' ? new TextEncoder().encode(file.content) : file.content,
+        );
+      }
+    }
     while (pass < maxPasses) {
       pass++;
       const result = await tex.compile({
         mainTex: opts.mainTex,
-        files: pass === 1 ? opts.files : materialize(),
+        files: materialize(),
+        ...(opts.processEnv ? { processEnv: opts.processEnv } : {}),
         extraArgs: texExtraArgs,
         ...budget(),
         // XeTeX in WASM cannot spawn xdvipdfmx itself (no popen); we always
@@ -244,9 +319,11 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
       if (
         needBibtex &&
         outputs.has(auxPath) &&
-        bytesToString(outputs.get(auxPath)) !== lastBibAux
+        bibliographySignature(outputs, auxPath) !== lastBibAux
       ) {
-        lastBibAux = bytesToString(outputs.get(auxPath));
+        lastBibAux = bibliographySignature(outputs, auxPath);
+        removedOutputs.add(`${base}.bbl`);
+        outputs.delete(`${base}.bbl`);
         bibtexWrapper ??= new Bibtexu(wrapperConfig(opts, 'bibtexu', opts.handles?.bibtex));
         const r = await bibtexWrapper.run({
           auxFile: auxPath,
@@ -272,9 +349,11 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
       // control file when options/citations change; a stable .bcf means
       // biber's work is already reflected in the .bbl.
       if (needBiber && outputs.has(bcfPath)) {
-        const bcfNow = bytesToString(outputs.get(bcfPath));
+        const bcfNow = binaryText(outputs.get(bcfPath));
         if (bcfNow !== lastBcf) {
           lastBcf = bcfNow;
+          removedOutputs.add(`${base}.bbl`);
+          outputs.delete(`${base}.bbl`);
           biberWrapper ??= new Biber(wrapperConfig(opts, 'biber', opts.handles?.biber));
           const r = await biberWrapper.run({ jobname: base, files: materialize(), ...budget() });
           pushLog(`biber ${base}`, r);
@@ -288,39 +367,63 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
         }
       }
 
-      // Makeindex whenever the .idx appeared or changed.
-      if (needMakeindex && outputs.has(idxPath)) {
-        const idxNow = bytesToString(outputs.get(idxPath));
-        if (idxNow !== lastIdx) {
-          lastIdx = idxNow;
-          makeindexWrapper ??= new Makeindex(
-            wrapperConfig(opts, 'makeindex', opts.handles?.makeindex),
-          );
-          const r = await makeindexWrapper.run({
-            idxFile: idxPath,
-            files: materialize(),
-            ...budget(),
-          });
-          pushLog(`makeindex ${idxPath}`, r);
-          outputs = mergeOutputs(outputs, r.outputs);
-          // A failed makeindex used to be swallowed: the document still built,
-          // but with a stale or missing index and success:true — a wrong
-          // document reported as a right one. makeindex exits non-zero only on
-          // real errors (a bad style file, unreadable .idx), so treat it like
-          // every other helper failure.
-          if (r.exitCode !== 0) {
-            exitCode = r.exitCode;
-            break;
+      // Discover every named index and each makeindex-based glossary from
+      // the generated aux declarations, not from source command heuristics.
+      for (const job of indexJobs(outputs, needMakeindex, opts.glossaries !== false)) {
+        const signature =
+          binaryText(outputs.get(job.input)) + '\0' + binaryText(outputs.get(job.style ?? ''));
+        if (lastIndexes.get(job.input) === signature) continue;
+        lastIndexes.set(job.input, signature);
+        makeindexWrapper ??= new Makeindex(
+          wrapperConfig(opts, 'makeindex', opts.handles?.makeindex),
+        );
+        removedOutputs.add(job.output);
+        removedOutputs.add(job.transcript);
+        outputs.delete(job.output);
+        outputs.delete(job.transcript);
+        const r = await makeindexWrapper.run({
+          idxFile: job.input,
+          output: job.output,
+          ...(job.style ? { style: job.style } : {}),
+          ...(job.glossary ? { extraArgs: ['-t', job.transcript] } : {}),
+          files: materialize(),
+          ...budget(),
+        });
+        pushLog(`makeindex ${job.input}`, r);
+        outputs = mergeOutputs(outputs, r.outputs);
+        helpersRan = true;
+        if (r.exitCode !== 0) {
+          exitCode = r.exitCode;
+          break;
+        }
+      }
+      if (exitCode !== 0) break;
+
+      if (opts.tools) {
+        for (const file of await runTools('auxiliary')) {
+          const bytes =
+            typeof file.content === 'string'
+              ? new TextEncoder().encode(file.content)
+              : file.content;
+          const old = outputs.get(file.path);
+          if (!old || old.length !== bytes.length || old.some((b, i) => b !== bytes[i])) {
+            outputs.set(file.path, bytes);
+            helpersRan = true;
           }
-          helpersRan = true;
         }
       }
 
-      const aux = bytesToString(outputs.get(auxPath));
+      const aux = auxiliarySnapshot(outputs);
       const log = bytesToString(outputs.get(logPath));
       const rerunRequested = RERUN_PATTERNS.some((re) => re.test(log));
       const auxStable = lastAux !== null && aux === lastAux;
       const hadAux = lastAux !== null;
+      if (!helpersRan && lastAux !== null && aux !== lastAux && seenStates.has(aux)) {
+        cycleDetected = true;
+        pendingRerun = true;
+        break;
+      }
+      seenStates.add(aux);
       lastAux = aux;
       pendingRerun = helpersRan || rerunRequested || (hadAux && !auxStable);
       converged = !helpersRan && !rerunRequested && (auxStable || rerunMode === false);
@@ -352,14 +455,62 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
     );
   }
 
+  const finalLog = bytesToString(outputs.get(logPath));
+  const diagnostics = diagnose(
+    finalLog + '\n' + (logs.filter((l) => l.cmd.startsWith(opts.engine)).at(-1)?.stderr ?? ''),
+  );
+  for (const job of indexJobs(outputs, needMakeindex, opts.glossaries !== false)) {
+    if (!outputs.has(job.output))
+      diagnostics.push({
+        code: 'missing-output',
+        severity: 'error',
+        message: `Expected generated output ${job.output} is missing.`,
+      });
+  }
+  if (pendingRerun && rerunMode !== false)
+    diagnostics.push({
+      code: 'non-convergence',
+      severity: 'error',
+      message: cycleDetected
+        ? 'Auxiliary files oscillate between previously seen states.'
+        : 'Auxiliary files did not converge within the pass limit.',
+    });
+  const complete =
+    exitCode === 0 &&
+    outputs.has(pdfPath) &&
+    diagnostics.length === 0 &&
+    (rerunMode === false || converged);
+  if (opts.tools && exitCode === 0 && outputs.has(pdfPath)) {
+    for (const file of await runTools('after')) {
+      outputs.set(
+        file.path,
+        typeof file.content === 'string' ? new TextEncoder().encode(file.content) : file.content,
+      );
+    }
+  }
   const result: LatexmkResult = {
-    success: exitCode === 0 && outputs.has(pdfPath) && (rerunMode === false || !pendingRerun),
+    complete,
+    diagnostics,
+    auxiliaryFiles: [...outputs]
+      .filter(([path]) =>
+        /\.(aux|toc|out|nav|snm|lof|lot|lol|bbl|bcf|run\.xml|idx|ind|glo|gls|acn|acr|ist)$/.test(
+          path,
+        ),
+      )
+      .map(([path, content]) => ({ path, content: content.slice() })),
+    success:
+      exitCode === 0 &&
+      outputs.has(pdfPath) &&
+      (rerunMode === false || !pendingRerun) &&
+      (!opts.strict || complete),
     log: bytesToString(outputs.get(logPath)),
     logs,
     exitCode,
     passes: pass,
     converged: exitCode === 0 && converged,
-    maxPassesReached: rerunMode !== false && exitCode === 0 && pass >= maxPasses && pendingRerun,
+    cycleDetected,
+    maxPassesReached:
+      rerunMode !== false && !cycleDetected && exitCode === 0 && pass >= maxPasses && pendingRerun,
   };
   const pdf = outputs.get(pdfPath);
   if (pdf) result.pdf = pdf;
@@ -484,7 +635,6 @@ function detectBibtex(files: FileInput[], biblatexMode: boolean): boolean {
   // biblatex docs: bibtexu can process the aux only for backend=bibtex
   // setups (biblatex also aliases \bibliography to \addbibresource, so the
   // classic marker alone must NOT trigger bibtexu on a biber-backend doc).
-  // The default biber backend is left alone until biber.wasm ships.
   if (biblatexMode) return biblatexBackendIsBibtex(files);
   // Classic bibtex: `\bibliography{…}` writes the aux bibtexu processes.
   return files.some((f) => sourceText(f).includes('\\bibliography{'));

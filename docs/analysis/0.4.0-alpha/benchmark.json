@@ -1,0 +1,478 @@
+[
+  {
+    "id": "pdflatex",
+    "tier": "core",
+    "lazy": true,
+    "initMs": 394.181092,
+    "samples": [
+      {
+        "wallMs": 638.7708690000001,
+        "passes": 2,
+        "pdfBytes": 47378,
+        "stages": [
+          {
+            "cmd": "pdflatex main.tex",
+            "factoryMs": 7.5902320000000145,
+            "setupMs": 58.58108699999997,
+            "callMainMs": 297.64285800000005,
+            "heapBytes": 141557760
+          },
+          {
+            "cmd": "pdflatex main.tex",
+            "factoryMs": 2.1490749999999252,
+            "setupMs": 28.626547000000073,
+            "callMainMs": 229.93037300000003,
+            "heapBytes": 141754368
+          }
+        ]
+      },
+      {
+        "wallMs": 459.4546419999999,
+        "passes": 2,
+        "pdfBytes": 47378,
+        "stages": [
+          {
+            "cmd": "pdflatex main.tex",
+            "factoryMs": 1.9440759999999955,
+            "setupMs": 30.121511000000055,
+            "callMainMs": 190.340508,
+            "heapBytes": 141557760
+          },
+          {
+            "cmd": "pdflatex main.tex",
+            "factoryMs": 1.5683449999999084,
+            "setupMs": 20.670928000000004,
+            "callMainMs": 211.665524,
+            "heapBytes": 141754368
+          }
+        ]
+      },
+      {
+        "wallMs": 474.6381919999999,
+        "passes": 2,
+        "pdfBytes": 47378,
+        "stages": [
+          {
+            "cmd": "pdflatex main.tex",
+            "factoryMs": 1.4863730000001851,
+            "setupMs": 18.309728999999834,
+            "callMainMs": 225.04491000000007,
+            "heapBytes": 141557760
+          },
+          {
+            "cmd": "pdflatex main.tex",
+            "factoryMs": 1.7160409999999047,
+            "setupMs": 29.860478000000057,
+            "callMainMs": 192.7693180000001,
+            "heapBytes": 141754368
+          }
+        ]
+      }
+    ],
+    "rssBytes": 364814336
+  },
+  {
+    "id": "pdflatex",
+    "tier": "core",
+    "lazy": false,
+    "initMs": 375.8317159999999,
+    "samples": [
+      {
+        "wallMs": 497.34869500000013,
+        "passes": 2,
+        "pdfBytes": 47378,
+        "stages": [
+          {
+            "cmd": "pdflatex main.tex",
+            "factoryMs": 7.334848999999849,
+            "setupMs": 72.19646200000034,
+            "callMainMs": 221.286333,
+            "heapBytes": 169869312
+          },
+          {
+            "cmd": "pdflatex main.tex",
+            "factoryMs": 1.890777000000071,
+            "setupMs": 34.9032659999998,
+            "callMainMs": 147.8391160000001,
+            "heapBytes": 169869312
+          }
+        ]
+      },
+      {
+        "wallMs": 378.6286319999999,
+        "passes": 2,
+        "pdfBytes": 47378,
+        "stages": [
+          {
+            "cmd": "pdflatex main.tex",
+            "factoryMs": 1.5286559999999554,
+            "setupMs": 33.242069999999785,
+            "callMainMs": 154.9524760000004,
+            "heapBytes": 169869312
+          },
+          {
+            "cmd": "pdflatex main.tex",
+            "factoryMs": 1.5101949999998396,
+            "setupMs": 32.97546800000009,
+            "callMainMs": 149.09539799999993,
+            "heapBytes": 169869312
+          }
+        ]
+      },
+      {
+        "wallMs": 365.6994340000001,
+        "passes": 2,
+        "pdfBytes": 47378,
+        "stages": [
+          {
+            "cmd": "pdflatex main.tex",
+            "factoryMs": 1.2593120000001363,
+            "setupMs": 28.824341000000004,
+            "callMainMs": 154.2650789999998,
+            "heapBytes": 169869312
+          },
+          {
+            "cmd": "pdflatex main.tex",
+            "factoryMs": 1.2403800000001866,
+            "setupMs": 29.569464000000153,
+            "callMainMs": 145.0859059999998,
+            "heapBytes": 169869312
+          }
+        ]
+      }
+    ],
+    "rssBytes": 511528960
+  },
+  {
+    "id": "pdflatex",
+    "tier": "full",
+    "lazy": true,
+    "initMs": 1561.1815660000002,
+    "samples": [
+      {
+        "wallMs": 1029.9851959999996,
+        "passes": 2,
+        "pdfBytes": 47378,
+        "stages": [
+          {
+            "cmd": "pdflatex main.tex",
+            "factoryMs": 41.936783000000105,
+            "setupMs": 273.98693899999944,
+            "callMainMs": 387.12937000000056,
+            "heapBytes": 152174592
+          },
+          {
+            "cmd": "pdflatex main.tex",
+            "factoryMs": 1.2843149999998786,
+            "setupMs": 126.3176569999996,
+            "callMainMs": 190.92404299999998,
+            "heapBytes": 152371200
+          }
+        ]
+      },
+      {
+        "wallMs": 758.5744989999994,
+        "passes": 2,
+        "pdfBytes": 47378,
+        "stages": [
+          {
+            "cmd": "pdflatex main.tex",
+            "factoryMs": 1.2897549999997864,
+            "setupMs": 130.65386399999988,
+            "callMainMs": 327.46076600000015,
+            "heapBytes": 152174592
+          },
+          {
+            "cmd": "pdflatex main.tex",
+            "factoryMs": 0.9777650000005451,
+            "setupMs": 125.67213999999967,
+            "callMainMs": 169.71828499999992,
+            "heapBytes": 152371200
+          }
+        ]
+      },
+      {
+        "wallMs": 769.6286360000004,
+        "passes": 2,
+        "pdfBytes": 47378,
+        "stages": [
+          {
+            "cmd": "pdflatex main.tex",
+            "factoryMs": 0.8922999999995227,
+            "setupMs": 119.21975900000052,
+            "callMainMs": 346.5424379999995,
+            "heapBytes": 152174592
+          },
+          {
+            "cmd": "pdflatex main.tex",
+            "factoryMs": 0.9961400000001959,
+            "setupMs": 121.7221669999999,
+            "callMainMs": 177.97474599999987,
+            "heapBytes": 152371200
+          }
+        ]
+      }
+    ],
+    "rssBytes": 1061806080
+  },
+  {
+    "id": "xelatex",
+    "tier": "core",
+    "lazy": true,
+    "reuse": false,
+    "initMs": 439.52539799999977,
+    "samples": [
+      {
+        "wallMs": 1927.3612649999995,
+        "passes": 2,
+        "pdfBytes": 14051,
+        "stages": [
+          {
+            "cmd": "xelatex main.tex",
+            "factoryMs": 8.328295000000253,
+            "setupMs": 68.94236199999978,
+            "callMainMs": 698.821707000001,
+            "heapBytes": 411762688
+          },
+          {
+            "cmd": "xelatex main.tex",
+            "factoryMs": 2.492616999999882,
+            "setupMs": 38.88499200000115,
+            "callMainMs": 526.222522,
+            "heapBytes": 411893760
+          },
+          {
+            "cmd": "xdvipdfmx -o main.pdf main.xdv",
+            "factoryMs": 6.228338000000804,
+            "setupMs": 51.787193000000116,
+            "callMainMs": 63.01303299999927,
+            "heapBytes": 33554432
+          }
+        ]
+      },
+      {
+        "wallMs": 1663.6349420000006,
+        "passes": 2,
+        "pdfBytes": 14051,
+        "stages": [
+          {
+            "cmd": "xelatex main.tex",
+            "factoryMs": 4.669131999999081,
+            "setupMs": 33.4119869999995,
+            "callMainMs": 588.0851640000001,
+            "heapBytes": 411762688
+          },
+          {
+            "cmd": "xelatex main.tex",
+            "factoryMs": 1.9440559999984544,
+            "setupMs": 19.483219000001554,
+            "callMainMs": 455.09544800000003,
+            "heapBytes": 411893760
+          },
+          {
+            "cmd": "xdvipdfmx -o main.pdf main.xdv",
+            "factoryMs": 7.346486000000368,
+            "setupMs": 67.58507400000053,
+            "callMainMs": 63.3288279999997,
+            "heapBytes": 33554432
+          }
+        ]
+      },
+      {
+        "wallMs": 1628.3845850000016,
+        "passes": 2,
+        "pdfBytes": 14051,
+        "stages": [
+          {
+            "cmd": "xelatex main.tex",
+            "factoryMs": 5.22448599999916,
+            "setupMs": 26.478008000000045,
+            "callMainMs": 529.6112529999991,
+            "heapBytes": 411762688
+          },
+          {
+            "cmd": "xelatex main.tex",
+            "factoryMs": 1.5545829999991838,
+            "setupMs": 24.921527000000424,
+            "callMainMs": 500.1347879999994,
+            "heapBytes": 411893760
+          },
+          {
+            "cmd": "xdvipdfmx -o main.pdf main.xdv",
+            "factoryMs": 5.742879999999786,
+            "setupMs": 42.806893999999375,
+            "callMainMs": 35.00610400000005,
+            "heapBytes": 33554432
+          }
+        ]
+      }
+    ],
+    "rssBytes": 1574551552
+  },
+  {
+    "id": "xelatex",
+    "tier": "core",
+    "lazy": true,
+    "reuse": true,
+    "initMs": 778.1839359999994,
+    "samples": [
+      {
+        "wallMs": 1301.893974999999,
+        "passes": 2,
+        "pdfBytes": 14051,
+        "stages": [
+          {
+            "cmd": "xelatex main.tex",
+            "factoryMs": 5.994292000001224,
+            "setupMs": 48.93335399999887,
+            "callMainMs": 615.7032950000012,
+            "heapBytes": 411762688
+          },
+          {
+            "cmd": "xelatex main.tex",
+            "factoryMs": 2.1482640000012907,
+            "setupMs": 29.654418999998597,
+            "callMainMs": 506.90696000000025,
+            "heapBytes": 411893760
+          },
+          {
+            "cmd": "xdvipdfmx -o main.pdf main.xdv",
+            "factoryMs": 4.376920000000609,
+            "setupMs": 41.01978499999859,
+            "callMainMs": 33.81011800000124,
+            "heapBytes": 33554432
+          }
+        ]
+      },
+      {
+        "wallMs": 1164.342333999999,
+        "passes": 2,
+        "pdfBytes": 14051,
+        "stages": [
+          {
+            "cmd": "xelatex main.tex",
+            "factoryMs": 2.4286339999998745,
+            "setupMs": 41.2655450000002,
+            "callMainMs": 540.2428389999986,
+            "heapBytes": 411762688
+          },
+          {
+            "cmd": "xelatex main.tex",
+            "factoryMs": 2.098187000001417,
+            "setupMs": 26.97248099999888,
+            "callMainMs": 505.22757900000215,
+            "heapBytes": 411893760
+          },
+          {
+            "cmd": "xdvipdfmx -o main.pdf main.xdv",
+            "factoryMs": 1.1493239999981597,
+            "setupMs": 22.33002900000065,
+            "callMainMs": 18.06557199999952,
+            "heapBytes": 33554432
+          }
+        ]
+      },
+      {
+        "wallMs": 1178.3033770000002,
+        "passes": 2,
+        "pdfBytes": 14051,
+        "stages": [
+          {
+            "cmd": "xelatex main.tex",
+            "factoryMs": 2.5774139999994077,
+            "setupMs": 38.56259399999908,
+            "callMainMs": 598.25115,
+            "heapBytes": 411762688
+          },
+          {
+            "cmd": "xelatex main.tex",
+            "factoryMs": 2.009036000003107,
+            "setupMs": 26.427723999997397,
+            "callMainMs": 474.05752500000017,
+            "heapBytes": 411893760
+          },
+          {
+            "cmd": "xdvipdfmx -o main.pdf main.xdv",
+            "factoryMs": 1.183483000000706,
+            "setupMs": 17.55235900000116,
+            "callMainMs": 13.894150000000081,
+            "heapBytes": 33554432
+          }
+        ]
+      }
+    ],
+    "rssBytes": 1631064064
+  },
+  {
+    "id": "lualatex",
+    "tier": "core",
+    "lazy": true,
+    "initMs": 580.7144700000026,
+    "samples": [
+      {
+        "wallMs": 1734.1868000000031,
+        "passes": 2,
+        "pdfBytes": 42630,
+        "stages": [
+          {
+            "cmd": "lualatex main.tex",
+            "factoryMs": 7.757133999999496,
+            "setupMs": 68.25192900000184,
+            "callMainMs": 894.3259929999986,
+            "heapBytes": 169869312
+          },
+          {
+            "cmd": "lualatex main.tex",
+            "factoryMs": 2.0154179999990447,
+            "setupMs": 20.81131699999969,
+            "callMainMs": 734.8240420000002,
+            "heapBytes": 113246208
+          }
+        ]
+      },
+      {
+        "wallMs": 1958.3059999999969,
+        "passes": 2,
+        "pdfBytes": 42630,
+        "stages": [
+          {
+            "cmd": "lualatex main.tex",
+            "factoryMs": 2.3878330000006827,
+            "setupMs": 22.266701000000467,
+            "callMainMs": 889.455410999999,
+            "heapBytes": 113246208
+          },
+          {
+            "cmd": "lualatex main.tex",
+            "factoryMs": 2.6153510000003735,
+            "setupMs": 33.08142299999963,
+            "callMainMs": 1004.9085520000008,
+            "heapBytes": 113246208
+          }
+        ]
+      },
+      {
+        "wallMs": 1693.279842,
+        "passes": 2,
+        "pdfBytes": 42630,
+        "stages": [
+          {
+            "cmd": "lualatex main.tex",
+            "factoryMs": 2.542170000000624,
+            "setupMs": 24.977261,
+            "callMainMs": 842.6659209999998,
+            "heapBytes": 113246208
+          },
+          {
+            "cmd": "lualatex main.tex",
+            "factoryMs": 2.877932999999757,
+            "setupMs": 36.60312799999883,
+            "callMainMs": 780.642316999998,
+            "heapBytes": 169869312
+          }
+        ]
+      }
+    ],
+    "rssBytes": 1452584960
+  }
+]

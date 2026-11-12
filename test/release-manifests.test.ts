@@ -15,12 +15,18 @@ it('publishes versioned per-engine manifests with matching bundle and file hashe
       'texmf-core-pdflatex',
       'texmf-core-xelatex',
       'texmf-core-lualatex',
+      'texmf-pack-portuguese',
     ])
       await writeFile(join(root, `${name}.tar.gz`), name);
     await buildReleaseManifests(root);
     const manifest = validateManifest(
       JSON.parse(await readFile(join(root, 'tex-packages-pdflatex.json'), 'utf8')),
     );
+    const packs = JSON.parse(await readFile(join(root, 'resource-packs.json'), 'utf8'));
+    expect(packs.packs.portuguese.sha256).toBe(
+      createHash('sha256').update('texmf-pack-portuguese').digest('hex'),
+    );
+    expect(manifest.environment?.engines).toBe('TeX Live 2026');
     expect(manifest.coreBundleUrl).toBe('texmf-core-pdflatex.tar.gz');
     expect(manifest.coreBundleSha256).toBe(
       createHash('sha256').update('texmf-core-pdflatex').digest('hex'),

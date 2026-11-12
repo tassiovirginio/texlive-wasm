@@ -34,15 +34,7 @@
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createReadStream, existsSync, readdirSync, statSync } from 'node:fs';
-import {
-  copyFile,
-  mkdir,
-  readFile,
-  readdir,
-  stat,
-  writeFile,
-  rm,
-} from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readdir, stat, writeFile, rm } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { createGzip } from 'node:zlib';
@@ -91,7 +83,11 @@ async function main() {
   await rm(outDir, { recursive: true, force: true });
   await mkdir(outDir, { recursive: true });
 
-  const version = resolveVersion(values.version, await packageVersion(), values['allow-version-mismatch']);
+  const version = resolveVersion(
+    values.version,
+    await packageVersion(),
+    values['allow-version-mismatch'],
+  );
   const assets = {};
 
   for (const engine of ENGINES) {
@@ -157,22 +153,31 @@ async function main() {
     }
   }
 
-  for (const name of readdirSync(artifactsDir).filter((n) => /^tex-packages(?:-[a-z]+)?\.json$/.test(n))) {
-    const source = join(artifactsDir,name);
-    const manifest = JSON.parse(await readFile(source,'utf8'));
-    if (manifest.version.replace(/^v/,'') !== version.replace(/^v/,'')) throw new Error(`Manifest version mismatch: ${name}`);
-    const dest = join(outDir,name); await copyFile(source,dest); assets[name] = await hashAndSize(dest);
+  for (const name of readdirSync(artifactsDir).filter((n) =>
+    /^tex-packages(?:-[a-z]+)?\.json$/.test(n),
+  )) {
+    const source = join(artifactsDir, name);
+    const manifest = JSON.parse(await readFile(source, 'utf8'));
+    if (manifest.version.replace(/^v/, '') !== version.replace(/^v/, ''))
+      throw new Error(`Manifest version mismatch: ${name}`);
+    const dest = join(outDir, name);
+    await copyFile(source, dest);
+    assets[name] = await hashAndSize(dest);
   }
 
+  if (existsSync(join(artifactsDir, 'resource-packs.json'))) {
+    const catalog = JSON.parse(await readFile(join(artifactsDir, 'resource-packs.json'), 'utf8'));
+    if (catalog.version.replace(/^v/, '') !== version.replace(/^v/, ''))
+      throw new Error('Resource pack catalog version mismatch');
+    await copyFile(join(artifactsDir, 'resource-packs.json'), join(outDir, 'resource-packs.json'));
+    assets['resource-packs.json'] = await hashAndSize(join(outDir, 'resource-packs.json'));
+  }
   const checksums = {
     version,
     generatedAt: new Date().toISOString(),
     assets,
   };
-  await writeFile(
-    join(outDir, 'checksums.json'),
-    JSON.stringify(checksums, null, 2),
-  );
+  await writeFile(join(outDir, 'checksums.json'), JSON.stringify(checksums, null, 2));
   console.log(
     `wrote ${Object.keys(assets).length} archives + checksums.json to ${relative(ROOT, outDir)}/`,
   );
@@ -252,7 +257,7 @@ function assertNonEmptyFile(path) {
 function findTdsBundles(artifactsDir) {
   const found = [];
   for (const name of readdirSync(artifactsDir).sort()) {
-    if (name === 'texmf.tar.gz' || /^texmf-core-[A-Za-z0-9]+\.tar\.gz$/.test(name)) {
+    if (name === 'texmf.tar.gz' || /^texmf-(?:core|pack)-[A-Za-z0-9]+\.tar\.gz$/.test(name)) {
       const path = join(artifactsDir, name);
       if (statSync(path).isFile()) found.push({ name, path });
     }
@@ -349,15 +354,15 @@ function ustarHeader(path, size) {
   const buf = Buffer.alloc(512);
   const { prefix, name } = splitUstarPath(path);
   buf.write(name, 0, 100);
-  writeOctal(buf, 100, 8, 0o644);              // mode
-  writeOctal(buf, 108, 8, 0);                  // uid
-  writeOctal(buf, 116, 8, 0);                  // gid
-  writeOctal(buf, 124, 12, size);              // size
-  writeOctal(buf, 136, 12, 0);                 // mtime — zero for reproducible bytes
-  buf.fill(0x20, 148, 156);                    // checksum placeholder (spaces)
-  buf[156] = 0x30;                             // typeflag '0' regular file
-  buf.write('ustar\0', 257, 6);                // magic
-  buf.write('00', 263, 2);                     // version
+  writeOctal(buf, 100, 8, 0o644); // mode
+  writeOctal(buf, 108, 8, 0); // uid
+  writeOctal(buf, 116, 8, 0); // gid
+  writeOctal(buf, 124, 12, size); // size
+  writeOctal(buf, 136, 12, 0); // mtime — zero for reproducible bytes
+  buf.fill(0x20, 148, 156); // checksum placeholder (spaces)
+  buf[156] = 0x30; // typeflag '0' regular file
+  buf.write('ustar\0', 257, 6); // magic
+  buf.write('00', 263, 2); // version
   if (prefix) buf.write(prefix, 345, 155);
   let sum = 0;
   for (let i = 0; i < 512; i++) sum += buf[i];

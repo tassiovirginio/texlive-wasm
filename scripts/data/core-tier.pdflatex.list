@@ -1,3 +1,2 @@
 # pdflatex-specific core-tier additions: the pre-built formats.
 web2c/pdftex/pdflatex.fmt
-web2c/pdftex/latex.fmt

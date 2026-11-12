@@ -1,23 +1,11 @@
 /**
  * The dogfooding layer: everything the showcase does with TeX goes through
- * the actual `texlive-wasm` npm API from here — createEngine + latexmk with
+ * the actual `texlive-wasm` npm API from here — incremental compile sessions with
  * per-engine Web Workers, exactly as a consumer app would use it.
  */
 
-import {
-  createEngineManager,
-  latexmk,
-  willRunBibtex,
-  willRunBiber,
-  willRunMakeindex,
-} from '@typeward/texlive-wasm';
-import type {
-  EngineId,
-  FileInput,
-  LatexmkEngine,
-  LatexmkOptions,
-  LatexmkResult,
-} from '@typeward/texlive-wasm';
+import { createCompileSession } from '@typeward/texlive-wasm';
+import type { EngineId, FileInput, LatexmkEngine, LatexmkResult } from '@typeward/texlive-wasm';
 import { createSignal } from 'solid-js';
 
 /** Human-readable artifact sizes for status messages (see README table). */
@@ -84,7 +72,8 @@ export function warmTds(): Promise<void> {
   return tdsWarm;
 }
 
-const manager = createEngineManager({
+const session = createCompileSession({
+  resourceVersion: 'demo-pinned-tds',
   maxLiveEngines: 3,
   onLoad: (id) => setEngineStatus(`loading ${id}.wasm (${ENGINE_SIZES[id]})…`),
   config: (id) => ({
@@ -95,8 +84,6 @@ const manager = createEngineManager({
   }),
 });
 
-export const getEngine = manager.engine;
-
 export interface CompileRequest {
   engine: LatexmkEngine;
   mainTex: string;
@@ -104,52 +91,17 @@ export interface CompileRequest {
   synctex?: boolean;
 }
 
-/**
- * Compile through `latexmk`. The driver would create helper wrappers without
- * an enginePath (which throws — no artifact ships in the npm package), so we
- * mirror its auto-detection, pre-create every needed handle ourselves, and
- * hand them all over.
- */
+/** Incremental edits use the same public session API recommended to consumers. */
 export async function compile(req: CompileRequest): Promise<LatexmkResult> {
   await warmTds();
-
-  // Use the library's own detection (classic \bibliography AND biblatex
-  // backend=bibtex vs default-backend biber) so the pre-created handles
-  // always match what latexmk will actually invoke.
-  const needBib = willRunBibtex(req.files, req.mainTex);
-  const needBiber = willRunBiber(req.files, req.mainTex);
-  const needIdx = willRunMakeindex(req.files, req.mainTex);
-  const involved: EngineId[] = [req.engine];
-  if (needBib) involved.push('bibtexu');
-  if (needBiber) involved.push('biber');
-  if (needIdx) involved.push('makeindex');
-  if (req.engine === 'xelatex') involved.push('xdvipdfmx');
-
-  return manager.withEngines(involved, async (engines) => {
-    const handles: NonNullable<LatexmkOptions['handles']> = { tex: engines.get(req.engine)! };
-    if (needBib) handles.bibtex = engines.get('bibtexu')!;
-    if (needBiber) handles.biber = engines.get('biber')!;
-    if (needIdx) handles.makeindex = engines.get('makeindex')!;
-    if (req.engine === 'xelatex') handles.xdvipdfmx = engines.get('xdvipdfmx')!;
-    setEngineStatus(`compiling with ${req.engine}…`);
-    const result = await latexmk({
-      engine: req.engine,
-      mainTex: req.mainTex,
-      files: req.files,
-      bibtex: needBib,
-      biber: needBiber,
-      makeindex: needIdx,
-      rerun: 'auto',
-      ...(req.synctex ? { synctex: true } : {}),
-      handles,
-    });
-    setEngineStatus(
-      result.success
-        ? `done — ${result.passes} pass(es)`
-        : result.maxPassesReached
-          ? `references unresolved after ${result.passes} passes`
-          : `failed (exit ${result.exitCode})`,
-    );
-    return result;
-  });
+  setEngineStatus(`preparing and compiling with ${req.engine}…`);
+  const result = await session.compile({ ...req, strict: true, rerun: 'auto' });
+  setEngineStatus(
+    result.success
+      ? `done — ${result.passes} pass(es)`
+      : result.diagnostics.length
+        ? result.diagnostics[0]!.message
+        : `failed (exit ${result.exitCode})`,
+  );
+  return result;
 }

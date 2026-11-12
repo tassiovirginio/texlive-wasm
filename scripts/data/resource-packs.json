@@ -1,0 +1,23 @@
+{
+  "portuguese": [
+    "texlive-lang-portuguese=2023.20240207-1",
+    "texlive-publishers=2023.20240207-1"
+  ],
+  "multilingual": [
+    "texlive-lang-arabic=2023.20240207-1",
+    "texlive-lang-chinese=2023.20240207-1",
+    "texlive-lang-japanese=2023.20240207-1",
+    "texlive-lang-korean=2023.20240207-1",
+    "fonts-noto-core=20201225-2",
+    "fonts-noto-cjk=1:20230817+repack1-3",
+    "texlive-lang-cjk=2023.20240207-1",
+    "fonts-arphic-bkai00mp=2.10-21",
+    "fonts-arphic-bsmi00lp=2.10-18",
+    "fonts-arphic-gbsn00lp=2.11-16",
+    "fonts-arphic-gkai00mp=2.11-16",
+    "fonts-baekmuk=2.2-13",
+    "fonts-unfonts-core=1:1.0.2-080608-18",
+    "fonts-unfonts-extra=1:1.0.2-080608+dfsg-11",
+    "fonts-hosny-amiri=1.000-1"
+  ]
+}

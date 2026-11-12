@@ -408,3 +408,15 @@ The Rust crate is an optional host-independent core, tested natively and via its
 WASM bindings. It is not an additional mandatory download for the TypeScript API.
 Shared detection fixtures enforce parity for bibliography/index routing. Runtime
 orchestration and full SyncTeX position lookup currently live in TypeScript.
+
+### Content diagnostics, incremental edits and language packs
+
+In 0.4+, `latexmk({ strict: true, ... })` fails on missing glyphs, missing
+index/glossary outputs and unresolved content. Inspect `result.complete` and
+`result.diagnostics` in addition to the PDF. `createCompileSession` reuses workers
+and validated auxiliary state across edits, including the XeLaTeX converter.
+Optional integrity-pinned Portuguese/ABNT and multilingual Noto packs extend the
+TDS without enlarging the core for every app.
+
+See [0.4 integration and validation](docs/validation-0.4.0-alpha.md) for setup,
+cache invalidation, resource profiles and explicit host-tool integrations.

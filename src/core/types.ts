@@ -29,6 +29,8 @@ export interface EngineConfig {
    * HTTP cache instead of shipping file bytes over the RPC boundary.
    */
   bundleUrl?: string;
+  /** Additive, integrity-pinned language/font bundles. Base files win on conflict. */
+  resourcePacks?: { url: string; sha256: string }[];
   /**
    * SHA-256 (hex) of the bundle at `bundleUrl`. Required for a cross-origin
    * bundle: those bytes are the entire TeX tree the engine executes. A bundle
@@ -99,6 +101,8 @@ export interface RunOptions {
    * xdvipdfmx and makeindex (Emscripten freezes real env vars at init).
    */
   env?: Record<string, string>;
+  /** Actual libc process variables, applied before main (requires v0.4+ engine). */
+  processEnv?: Record<string, string>;
   /**
    * Maximum wall-clock time before the run is aborted, in ms. The engine
    * runs synchronously inside its worker, so aborting terminates the worker

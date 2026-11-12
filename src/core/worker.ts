@@ -11,7 +11,8 @@ import { fetchAsset } from './assets';
  * repopulating MEMFS from the cached map, which is what correctness costs.
  *
  * Compile-time mandates we worked around:
- * - Emscripten ENV must be set BEFORE init; we sidestep by using TL's
+ * - kpathsea overrides use texmf.cnf; processEnv uses the exported libc setter.
+ *   Legacy configuration keeps using TL's
  *   `-cnf-line=KEY=VAL` args which inject texmf.cnf settings at runtime.
  * - kpathsea search paths derive from $SELFAUTOPARENT (= dirname(thisProgram));
  *   we use thisProgram='/bin/<engine>' so /texmf-dist/web2c is in the cnf path.
@@ -99,6 +100,7 @@ interface EmscriptenModule {
   HEAPU32: Uint32Array;
   _malloc(size: number): number;
   _free(ptr: number): void;
+  _texlive_setenv?: (key: number, value: number) => number;
   _udata_setCommonData_78?: (dataPtr: number, errPtr: number) => void;
   print?: (text: string) => void;
   printErr?: (text: string) => void;
@@ -184,6 +186,27 @@ class WorkerImpl implements WorkerApi {
    * the TDS it was built from (a TDS change means a new worker + init()).
    */
   private varFiles = new Map<string, Uint8Array>();
+  private fontFiles = new Map<string, Uint8Array>();
+  private projectFonts = new Map<string, Uint8Array>();
+  private treeSize = -1;
+  private treePlan: { absolute: string; parent: string; path: string; encoded: Uint8Array }[] = [];
+  private lsR = '';
+
+  private prepareTree(): void {
+    if (this.treeSize === this.tdsFiles.size) return;
+    const encoder = new TextEncoder();
+    this.treePlan = [...this.tdsFiles.keys()].map((path) => {
+      const absolute = `/texmf-dist/${path}`;
+      return {
+        path,
+        absolute,
+        parent: dirname(absolute),
+        encoded: encoder.encode(absolute + '\0'),
+      };
+    });
+    this.lsR = buildLsR(this.tdsFiles.keys());
+    this.treeSize = this.tdsFiles.size;
+  }
   /**
    * basename → full TDS paths, built from the manifest (config.manifestUrl).
    * The lazy-fetch retry resolves log-reported names ("lmodern.sty") to
@@ -209,6 +232,12 @@ class WorkerImpl implements WorkerApi {
       reconstructBackend(meta, i, host ?? null),
     );
 
+    // Download/compile independent runtime assets while the TDS unpacks.
+    const runtime = this.loadRuntime(opts).then(
+      () => ({ error: null }),
+      (error) => ({ error }),
+    );
+
     // The core bundle is fetched and unpacked here in the worker (highest
     // priority backend) — the browser HTTP cache dedupes the download
     // across engine instances and no file bytes cross the RPC boundary.
@@ -227,62 +256,34 @@ class WorkerImpl implements WorkerApi {
       );
     }
 
-    for (const b of this.backends) {
-      await b.init?.();
-    }
+    const packs = await Promise.all(
+      (opts.config.resourcePacks ?? []).map((pack) => {
+        if (!/^[a-f0-9]{64}$/i.test(pack.sha256))
+          throw new Error('Resource packs require a SHA-256 digest');
+        return createBundleFs({ bundleUrl: pack.url, sha256: pack.sha256 });
+      }),
+    );
+    // Keep the core first; packs add resources without replacing its format/packages.
+    const offset = opts.config.bundleUrl || opts.bundleFromManifest ? 1 : 0;
+    this.backends.splice(offset, 0, ...packs);
+    await Promise.all(this.backends.map((b) => b.init?.()));
 
-    if (this.config.fmtPath) {
-      const fmt = FMT_PATH[this.engineId];
-      if (!fmt) throw new Error(`Engine ${this.engineId} does not use a LaTeX format`);
-      const response = await fetchAsset(this.config.fmtPath);
-      if (!response.ok) throw new Error(`HTTP ${response.status} fetching fmtPath`);
-      this.tdsFiles.set(
-        fmt.slice('/texmf-dist/'.length),
-        new Uint8Array(await response.arrayBuffer()),
-      );
-    }
-
-    const glueUrl = this.resolveEngineGlueUrl();
-    this.glueFactory = (
-      (await import(/* @vite-ignore */ glueUrl)) as { default: ModuleFactory }
-    ).default;
-
-    // Compile the wasm once up front (see wasmModule doc). Any failure —
-    // exotic URL scheme, missing CORS, Node file:// — falls back to the
-    // glue's own loader, which is correct just slower.
-    if (this.config.enginePath) {
-      try {
-        const r = await fetchAsset(this.config.enginePath);
-        if (r.ok) {
-          this.wasmModule = await WebAssembly.compile(await r.arrayBuffer());
-        }
-      } catch {
-        this.wasmModule = null;
-      }
-    }
-
-    this.icuData = opts.icuData ?? null;
-    if (!this.icuData && opts.config.icuDataUrl) {
-      const r = await fetchAsset(opts.config.icuDataUrl);
-      if (!r.ok) {
-        throw new Error(
-          `texlive-wasm: HTTP ${r.status} fetching icuDataUrl ${opts.config.icuDataUrl}`,
-        );
-      }
-      this.icuData = new Uint8Array(await r.arrayBuffer());
-    }
+    const runtimeResult = await runtime;
+    if (runtimeResult.error) throw runtimeResult.error;
 
     // Drain every backend that exposes list() into the in-worker TDS map.
     for (const backend of this.backends) {
       if (!backend.list) continue;
       const paths = await backend.list('');
-      for (const tdsPath of paths) {
-        // A backend's own listing is not automatically trustworthy — an
-        // archive it unpacked chose these names.
-        const rel = safeRelativePath(tdsPath);
-        if (!rel) continue;
-        const bytes = await backend.read(tdsPath);
-        if (bytes && !this.tdsFiles.has(rel)) this.tdsFiles.set(rel, bytes);
+      for (let start = 0; start < paths.length; start += 64) {
+        await Promise.all(
+          paths.slice(start, start + 64).map(async (tdsPath) => {
+            const rel = safeRelativePath(tdsPath);
+            if (!rel || this.tdsFiles.has(rel)) return;
+            const bytes = await backend.read(tdsPath);
+            if (bytes && !this.tdsFiles.has(rel)) this.tdsFiles.set(rel, bytes);
+          }),
+        );
       }
     }
 
@@ -301,6 +302,56 @@ class WorkerImpl implements WorkerApi {
         this.nameIndex.clear();
       }
     }
+  }
+
+  private async loadRuntime(opts: WorkerInitOptions): Promise<void> {
+    await Promise.all([
+      (async () => {
+        if (opts.config.fmtPath) {
+          const fmt = FMT_PATH[opts.engineId];
+          if (!fmt) throw new Error(`Engine ${this.engineId} does not use a LaTeX format`);
+          const response = await fetchAsset(opts.config.fmtPath);
+          if (!response.ok) throw new Error(`HTTP ${response.status} fetching fmtPath`);
+          this.tdsFiles.set(
+            fmt.slice('/texmf-dist/'.length),
+            new Uint8Array(await response.arrayBuffer()),
+          );
+        }
+      })(),
+      (async () => {
+        const glueUrl = this.resolveEngineGlueUrl();
+        this.glueFactory = (
+          (await import(/* @vite-ignore */ glueUrl)) as { default: ModuleFactory }
+        ).default;
+      })(),
+      (async () => {
+        // Compile the wasm once up front (see wasmModule doc). Any failure —
+        // exotic URL scheme, missing CORS, Node file:// — falls back to the
+        // glue's own loader, which is correct just slower.
+        if (opts.config.enginePath) {
+          try {
+            const r = await fetchAsset(opts.config.enginePath);
+            if (r.ok) {
+              this.wasmModule = await WebAssembly.compile(await r.arrayBuffer());
+            }
+          } catch {
+            this.wasmModule = null;
+          }
+        }
+      })(),
+      (async () => {
+        this.icuData = opts.icuData ?? null;
+        if (!this.icuData && opts.config.icuDataUrl) {
+          const r = await fetchAsset(opts.config.icuDataUrl);
+          if (!r.ok) {
+            throw new Error(
+              `texlive-wasm: HTTP ${r.status} fetching icuDataUrl ${opts.config.icuDataUrl}`,
+            );
+          }
+          this.icuData = new Uint8Array(await r.arrayBuffer());
+        }
+      })(),
+    ]);
   }
 
   /** Build a fresh engine instance with the TDS + ICU state applied. */
@@ -344,8 +395,10 @@ class WorkerImpl implements WorkerApi {
       const errPtr = module._malloc(4);
       module.HEAPU32[errPtr >> 2] = 0;
       module._udata_setCommonData_78(ptr, errPtr);
-      // U_ZERO_ERROR is 0; non-zero is informational, ICU still works
-      // with fallback paths. We don't fail instance creation.
+      const status = module.HEAPU32[errPtr >> 2]! | 0;
+      module._free(errPtr);
+      // ICU warnings are negative; positive statuses mean initialization failed.
+      if (status > 0) throw new Error(`ICU data initialization failed (UErrorCode=${status})`);
     }
 
     const FS = module.FS;
@@ -375,6 +428,13 @@ class WorkerImpl implements WorkerApi {
       mkdirCached(FS, dirname(absolute), dirs);
       FS.writeFile(absolute, bytes);
     }
+
+    for (const [rel, bytes] of this.fontFiles) {
+      const absolute = `/tmp/fontcache/${rel}`;
+      mkdirCached(FS, dirname(absolute), dirs);
+      FS.writeFile(absolute, bytes);
+    }
+    this.prepareTree();
 
     // biber's VFS (biber-vfs.tar.gz: perl/ + biber/ trees) mounts at the
     // filesystem ROOT — it is a Perl runtime, not a texmf tree. Everything
@@ -407,7 +467,7 @@ class WorkerImpl implements WorkerApi {
       // adds a file, and with $TEXMFDBS set the db is authoritative. Keeping
       // it exact turns every `//` search into an O(1) db hit. (Under the
       // lazy mount the write lands in the handler's copy-on-write map.)
-      FS.writeFile('/texmf-dist/ls-R', buildLsR(this.tdsFiles.keys()));
+      FS.writeFile('/texmf-dist/ls-R', this.lsR);
     }
     return module;
   }
@@ -489,11 +549,11 @@ class WorkerImpl implements WorkerApi {
       const scratch = module._malloc(4096);
       let failedTouch: string | null = null;
       try {
-        for (const [tdsPath, bytes] of this.tdsFiles) {
-          const absolute = `/texmf-dist/${tdsPath}`;
-          mkdirCached(module.FS, dirname(absolute), dirs);
-          pending = bytes;
-          m.stringToUTF8(absolute, scratch, 4096);
+        for (const { path, absolute, parent, encoded } of this.treePlan) {
+          if (encoded.length > 4096) throw new Error('TDS path exceeds 4095 bytes');
+          mkdirCached(module.FS, parent, dirs);
+          pending = this.tdsFiles.get(path)!;
+          module.HEAPU8.set(encoded, scratch);
           const rc = m._texlive_touch(scratch);
           pending = null; // a failed touch must not leak onto the next node
           if (rc !== 0) {
@@ -545,6 +605,24 @@ class WorkerImpl implements WorkerApi {
     const maxRetries = lazy === false ? 0 : lazy === true ? 8 : Math.max(0, lazy.maxRetries ?? 8);
     let exitCode = 0;
     let retriesUsed = 0;
+    const missingAttempts = new Set<string>();
+    const projectFonts = new Map(
+      (opts.files ?? [])
+        .filter((file) => /\.(otf|ttf|ttc|pfb|pfa|tfm|vf|enc|map)$/i.test(file.path))
+        .map((file) => [file.path, normalizeBytes(file.content)]),
+    );
+    if (
+      projectFonts.size !== this.projectFonts.size ||
+      [...projectFonts].some(([path, bytes]) => {
+        const previous = this.projectFonts.get(path);
+        return !previous || !sameBytes(previous, bytes);
+      })
+    ) {
+      this.varFiles.clear();
+      this.fontFiles.clear();
+    }
+    this.projectFonts = projectFonts;
+
     let stdout = '';
     let stderr = '';
     let outputs = new Map<string, Uint8Array>();
@@ -560,6 +638,26 @@ class WorkerImpl implements WorkerApi {
       try {
         module = await this.createInstance(opts.stdin);
         FS = module.FS;
+        for (const [key, value] of Object.entries(opts.processEnv ?? {})) {
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || value.includes('\0'))
+            throw new Error('Invalid process environment variable');
+          if (!module._texlive_setenv)
+            throw new Error('processEnv requires an engine built with texlive_setenv (v0.4+)');
+          const encoder = new TextEncoder();
+          const k = encoder.encode(key + '\0'),
+            v = encoder.encode(value + '\0');
+          const kp = module._malloc(k.length),
+            vp = module._malloc(v.length);
+          try {
+            module.HEAPU8.set(k, kp);
+            module.HEAPU8.set(v, vp);
+            if (module._texlive_setenv(kp, vp) !== 0)
+              throw new Error(`Unable to set process variable ${key}`);
+          } finally {
+            module._free(kp);
+            module._free(vp);
+          }
+        }
         inputs.clear();
         for (const file of opts.files ?? []) {
           const rel = safeRelativePath(file.path);
@@ -613,7 +711,12 @@ class WorkerImpl implements WorkerApi {
       // build, so harvest unconditionally.
       if (this.config?.persistTexmfVar !== false) {
         try {
+          this.varFiles.clear();
           collectFiles(FS, '/tmp/texmf-var', '', this.varFiles);
+          if (this.engineId === 'xelatex') {
+            this.fontFiles.clear();
+            collectFiles(FS, '/tmp/fontcache', '', this.fontFiles);
+          }
         } catch {
           // A run that never touched the cache dir is fine.
         }
@@ -624,7 +727,7 @@ class WorkerImpl implements WorkerApi {
       // xdvipdfmx writes no log file — its complaints only exist on stderr.
       const missing = parseMissingFiles(log || `${this.stdoutBuf}\n${this.stderrBuf}`);
       if (missing.length === 0) break;
-      const fetched = await this.fetchMissingIntoTds(missing);
+      const fetched = await this.fetchMissingIntoTds(missing, missingAttempts);
       if (fetched === 0) break;
       retriesUsed++;
     }
@@ -714,9 +817,12 @@ class WorkerImpl implements WorkerApi {
    * plausible TDS sublocations because the log usually says
    * "lmroman10-regular.otf", not the absolute TDS path.
    */
-  private async fetchMissingIntoTds(missing: string[]): Promise<number> {
+  private async fetchMissingIntoTds(
+    missing: string[],
+    attempted = new Set<string>(),
+  ): Promise<number> {
     let written = 0;
-    for (const name of missing) {
+    for (const name of new Set(missing)) {
       // Exact manifest paths first; heuristic location guessing as fallback.
       const indexed = name.includes('/') ? [] : (this.nameIndex.get(name) ?? []);
       // These names were parsed out of an engine log — i.e. out of whatever
@@ -726,6 +832,8 @@ class WorkerImpl implements WorkerApi {
         .map((c) => safeRelativePath(c))
         .filter((c): c is string => c !== null);
       for (const candidate of candidates) {
+        if (this.tdsFiles.has(candidate) || attempted.has(candidate)) continue;
+        attempted.add(candidate);
         let bytes: Uint8Array | null = null;
         for (const backend of this.backends) {
           try {
@@ -741,6 +849,10 @@ class WorkerImpl implements WorkerApi {
         }
         if (bytes) {
           this.tdsFiles.set(candidate, bytes);
+          if (candidate.startsWith('fonts/')) {
+            this.varFiles.clear();
+            this.fontFiles.clear();
+          }
           written++;
           break;
         }
@@ -759,6 +871,13 @@ class WorkerImpl implements WorkerApi {
    */
   private findLog(FS: EmscriptenFS, args: string[], cwd: string): string {
     if (!this.engineId) return '';
+    if (this.engineId === 'makeindex') {
+      const index = args.indexOf('-t');
+      if (index >= 0 && args[index + 1]) {
+        const path = safeResolve('/project', `${cwd}/${args[index + 1]}`);
+        return path ? readTextFile(FS, path) : '';
+      }
+    }
     const ext = LOG_EXT[this.engineId];
     if (!ext) return ''; // xdvipdfmx: diagnostics go to stderr, not a file
     const stem = this.jobStem(args);
@@ -789,6 +908,11 @@ class WorkerImpl implements WorkerApi {
     this.wasmModule = null;
     this.tdsFiles.clear();
     this.varFiles.clear();
+    this.fontFiles.clear();
+    this.projectFonts.clear();
+    this.treePlan = [];
+    this.treeSize = -1;
+    this.lsR = '';
   }
 
   private resolveEngineGlueUrl(): string {
@@ -966,6 +1090,7 @@ function parseMissingFiles(log: string): string[] {
     // TeX engines.
     /I can't find file `([^']+)'/g,
     /File `([^']+)' not found/g,
+    /language definition file\s+([\w.-]+\.ldf)/g,
     /file `([^']+)' is not loadable/g,
     /Cannot find ([\w.-]+\.(?:sty|cls|fd|def|cfg|tfm|vf|pfb|otf|ttf|mf|enc|map))/gi,
     // bibtex/bibtexu (.blg): "I couldn't open style file plainnat.bst".
@@ -998,9 +1123,20 @@ function expandMissingName(name: string): string[] {
   const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : '';
   const stem = name;
   const out = [stem];
-  if (ext === 'sty' || ext === 'cls' || ext === 'def' || ext === 'fd' || ext === 'cfg') {
+  if (
+    ext === 'sty' ||
+    ext === 'ldf' ||
+    ext === 'cls' ||
+    ext === 'def' ||
+    ext === 'fd' ||
+    ext === 'cfg'
+  ) {
     out.push(`tex/latex/${stem.replace(/\.\w+$/, '')}/${stem}`);
     out.push(`tex/latex/base/${stem}`);
+    if (ext === 'ldf') {
+      const language = /^(brazil|portugu)/.test(stem) ? 'portuges' : stem.replace(/\.ldf$/, '');
+      out.push(`tex/generic/babel-${language}/${stem}`);
+    }
   } else if (ext === 'tex' || ext === 'ltx') {
     out.push(`tex/generic/${stem.replace(/\.\w+$/, '')}/${stem}`);
   } else if (ext === 'tfm') {

@@ -117,3 +117,10 @@ FILE *popen(const char *c, const char *m) { (void)c; (void)m; errno = ENOSYS; re
 int pclose(FILE *f) { (void)f; errno = ECHILD; return -1; }
 int system(const char *c) { (void)c; errno = ENOSYS; return -1; }
 #endif
+
+/* Apply a real libc environment override before main, including reproducible
+ * timestamps read with getenv rather than kpathsea configuration. */
+#include <stdlib.h>
+int texlive_setenv(const char *key, const char *value) {
+    return setenv(key, value, 1);
+}

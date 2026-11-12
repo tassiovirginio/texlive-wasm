@@ -157,19 +157,7 @@ rm -rf /workspace/engine-artifacts/$TDS_STAGING_NAME/doc \
        /workspace/engine-artifacts/$TDS_STAGING_NAME/metafont \
        /workspace/engine-artifacts/$TDS_STAGING_NAME/mft \
        /workspace/engine-artifacts/$TDS_STAGING_NAME/xdvi 2>/dev/null || true
-echo "[+] trimming biblatex contrib styles to a curated set..."
-# texlive-bibtex-extra ships dozens of tex/latex/biblatex-<style> contrib
-# packages; keep only the widely-used ones (the standard numeric/alphabetic/
-# authoryear families live in biblatex core and always ship). The long tail
-# belongs to the CDN tier, not the base TDS.
-KEEP_BIBLATEX=" biblatex-apa biblatex-chicago biblatex-ieee biblatex-mla biblatex-nature biblatex-phys "
-for d in /workspace/engine-artifacts/$TDS_STAGING_NAME/tex/latex/biblatex-*; do
-  [ -d "$d" ] || continue
-  case "$KEEP_BIBLATEX" in
-    *" $(basename "$d") "*) ;;
-    *) rm -rf "$d" ;;
-  esac
-done
+# Keep contrib bibliography styles in full TDS and its integrity index.
 echo "[+] verifying bibliography payload (biblatex + CSL)..."
 echo "[debug] dpkg: $(dpkg-query -W texlive-bibtex-extra 2>&1 || true)"
 echo "[debug] src sty: $(ls -la /usr/share/texlive/texmf-dist/tex/latex/biblatex/biblatex.sty 2>&1 || true)"

@@ -38,6 +38,8 @@ export interface ManifestEntry {
 export interface TexPackagesManifest {
   /** Manifest format version. Bumped on schema changes. */
   schema: 1;
+  /** Exact compatibility profile; engine year alone does not identify package versions. */
+  environment?: { id: string; engines: string; tds: string };
   /** Versioned build identifier, e.g. "texlive-2026-r0". */
   version: string;
   /** When the manifest was built (ISO 8601). */
@@ -83,6 +85,17 @@ export function validateManifest(value: unknown): TexPackagesManifest {
     Array.isArray(m.files)
   ) {
     throw new Error('Invalid manifest metadata');
+  }
+  if (m.environment !== undefined) {
+    const profile = m.environment as Record<string, unknown>;
+    if (
+      !profile ||
+      typeof profile !== 'object' ||
+      ['id', 'engines', 'tds'].some(
+        (key) => typeof profile[key] !== 'string' || !(profile[key] as string).trim(),
+      )
+    )
+      throw new Error('Invalid manifest environment');
   }
   for (const key of ['coreBundleUrl', 'fullBundleUrl', 'cdnBaseUrl']) {
     if (m[key] !== null && typeof m[key] !== 'string') throw new Error(`Invalid manifest ${key}`);

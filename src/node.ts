@@ -18,6 +18,11 @@ export async function initializeNodeEngine(
     if (value && !/^[a-z][a-z0-9+.-]*:/i.test(value))
       normalized[key] = pathToFileURL(resolve(value)).href;
   }
+  if (config.resourcePacks)
+    normalized.resourcePacks = config.resourcePacks.map((pack) => ({
+      ...pack,
+      url: /^[a-z][a-z0-9+.-]*:/i.test(pack.url) ? pack.url : pathToFileURL(resolve(pack.url)).href,
+    }));
   const backends =
     suppliedBackends ??
     config.vfs ??
@@ -55,3 +60,10 @@ export function createNodeEngine(id: EngineId, config: EngineConfig = {}): Promi
 
 export { latexmk } from './latexmk';
 export type { EngineConfig, EngineHandle, EngineId, RunOptions, RunResult } from './core/types';
+
+export { createCompileSession } from './latexmk/session';
+export type {
+  CompileSession,
+  CompileSessionOptions,
+  SessionCompileOptions,
+} from './latexmk/session';
