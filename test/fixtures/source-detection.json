@@ -1,0 +1,8 @@
+[
+  {"path":"main.tex","content":"% \\usepackage{biblatex}\nText","bibtex":false,"biber":false,"makeindex":false},
+  {"path":"main.tex","content":"\\usepackage[backend=bibtex]{biblatex}","bibtex":true,"biber":false,"makeindex":false},
+  {"path":"main.tex","content":"\\usepackage{biblatex}","bibtex":false,"biber":true,"makeindex":false},
+  {"path":"main.tex","content":"\\bibliography{refs} \\makeindex","bibtex":true,"biber":false,"makeindex":true},
+  {"path":"data.bib","content":"\\bibliography{refs} \\makeindex \\usepackage{biblatex}","bibtex":false,"biber":false,"makeindex":false},
+  {"path":"main.tex","content":"\\% literal \\makeindex % ignored \\bibliography{refs}","bibtex":false,"biber":false,"makeindex":true}
+]

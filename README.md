@@ -7,10 +7,8 @@ Run TeX Live in WebAssembly. Compiles LaTeX → PDF in the browser and in a
 Tauri / Capacitor mobile app, with one `.wasm` per engine.
 
 **Runtime support today:** anywhere a Web Worker runs — browsers, the Tauri
-WebView, Capacitor. **Node and the WASI edge are not implemented:** the same
-C sources do build a WASI target, but the wrapper has no in-process runner
-for it, so `createEngine()` throws outside a Worker-capable host. Treat that
-target as experimental and unpublished (see the table below).
+WebView, Capacitor. **Node 20+ is supported using worker threads** with the Emscripten engines.
+The WASI target remains experimental and is not part of published engine releases.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Live demo](https://img.shields.io/badge/live%20demo-typeward.github.io%2Ftexlive--wasm-2f3e55)](https://typeward.github.io/texlive-wasm/)
@@ -35,8 +33,10 @@ commit `fb61589266`):
 | pdfLaTeX (WASI) | `pdflatex.wasm` (wasi-sdk)| 2.0 MB  | **not implemented** — the artifact builds locally, but no JS runner drives it and it is not published |
 
 SyncTeX is built into every engine. The JS parser in `src/synctex/`
-currently extracts the input-file list only; `forward()` and `reverse()`
-return an empty list — position lookup is scheduled for Phase 4.
+supports input-file listing and forward/reverse position queries in PDF points,
+including compressed positions, multiple pages, PDF form references and postscript offsets.
+Lookup uses nearest source lines and nearest page rectangles; it is not a drop-in
+implementation of every selection heuristic in the native SyncTeX parser.
 
 ## Install
 
@@ -61,7 +61,7 @@ npx @typeward/texlive-wasm download-assets --tag v0.1.0-alpha.0 ./static/texlive
 npx @typeward/texlive-wasm download-assets --assets pdflatex-emscripten,icudt78l.dat
 ```
 
-The CLI looks up `https://github.com/typeward/texlive-wasm/releases/download/<tag>/checksums.json`,
+The CLI looks up `https://github.com/tassiovirginio/texlive-wasm/releases/download/<tag>/checksums.json`,
 verifies SHA-256 of every downloaded blob against it, and unpacks the
 `tar.gz` files into the destination.
 
@@ -100,7 +100,7 @@ carry, and the release workflow rejects a tag that does not match
 `package.json`.
 
 Downstream apps (the Typeward app included) should pin an exact version —
-`"@typeward/texlive-wasm": "0.2.5-alpha"`, no `^`/`~` — so the wrapper and its
+`"@typeward/texlive-wasm": "0.3.0-alpha"`, no `^`/`~` — so the wrapper and its
 assets can never drift apart across installs.
 
 npm dist-tags follow the release channel: stable versions publish as `latest`,
@@ -261,7 +261,7 @@ import {
   Makeindex,
   Xdvipdfmx,
   latexmk,                 // multi-pass driver
-  createSynctex,           // JS parser for .synctex(.gz) — file list today, lookups in Phase 4
+  createSynctex,           // JS parser for .synctex(.gz) — files and source/PDF position lookup
   loadManifest,            // tex-packages.json reader
 } from '@typeward/texlive-wasm';
 
@@ -327,3 +327,84 @@ plan.md               — design notes & roadmap
 MIT for the wrapper code in `src/` and the CLI. Engine artifacts inherit
 their upstream TeX Live licenses (LPPL, GPL, and friends) — see the
 TeX Live LICENSE.TL bundled with each release.
+
+## Node and release tarballs
+
+This fork publishes an installable `typeward-texlive-wasm-<version>.tgz` with each
+GitHub release, alongside the engines, TDS bundles, manifests and SHA-256 checksums.
+The npm scope remains `@typeward/texlive-wasm`; publishing this fork does not publish
+to that npm scope. Download the matching wrapper tarball and install it locally:
+
+```sh
+npm install ./typeward-texlive-wasm-0.3.0-alpha.tgz
+npx texlive-wasm download-assets
+```
+
+Node uses worker threads so timeouts and cancellation can terminate a synchronous
+engine. It supports HTTP assets and explicit local paths/file URLs:
+
+```ts
+import { createEngine, latexmk } from '@typeward/texlive-wasm';
+
+const handle = await createEngine('pdflatex', {
+  enginePath: './public/texlive-wasm/pdflatex/emscripten/pdflatex.wasm',
+  manifestUrl: './public/texlive-wasm/tex-packages-pdflatex.json',
+});
+try {
+  const result = await latexmk({
+    engine: 'pdflatex', mainTex: 'main.tex',
+    files: [{path: 'main.tex', content: String.raw`\documentclass{article}\begin{document}Hello\end{document}`}],
+    handles: {tex: handle}, timeoutMs: 60_000,
+  });
+  console.log(result.success, result.converged, result.maxPassesReached);
+} finally {
+  await handle.dispose();
+}
+```
+
+`latexmk` reports failure when its automatic pass budget is exhausted with a rerun
+still pending, while retaining the PDF for preview. Explicit `rerun: false` keeps
+single-pass success semantics; `converged` still reports unresolved work.
+
+`initTimeoutMs` (default 300000; 0 disables) and `initSignal` bound engine startup.
+Wrapper invocation deadlines include startup; queued low-level calls can be
+cancelled without terminating another caller's active run. `fmtPath` downloads
+an explicit format, and low-level `stdin` accepts UTF-8 strings or bytes.
+`lazyFetch` retries up to eight rounds by default, within the invocation deadline.
+
+Verified cache/CDN layers reject files missing from the manifest. Explicit custom
+backends can still provide application-owned files. OPFS is optional and falls back
+when unavailable; core bundles remain usable in those contexts. Engine managers
+recreate terminated workers and trim excess idle workers after multi-engine scopes.
+
+## Verification and reproducible assets
+
+```sh
+npm ci
+npm run check
+npx playwright install --with-deps chromium firefox webkit
+npm run test:browser
+bash rust/build-wasm.sh  # requires the wasm-bindgen CLI version in rust/Cargo.lock
+node rust/wasm-smoke.mjs
+node test/rust-parity.mjs
+```
+
+Coverage gates: 85% statements, 75% branches, 85% functions and 85% lines. Browser
+integration exercises workers, Comlink, transferred outputs, cancellation/recovery
+and OPFS persistence or fallback on Chromium, Firefox and WebKit, including mobile
+viewport profiles. Those profiles do not replace testing on physical Android/iOS devices.
+The transport fixtures deliberately do not pretend to be TeX engines. Release
+smoke tests compile real documents against the freshly built engines separately.
+
+TDS assembly pins the Ubuntu image by digest and the TeX/font package versions in
+`scripts/data/tds-packages.lock`. It stages a complete tree before publishing it,
+checks the installed package set and records a completion marker tied to the lock.
+An optional `TDS_SNAPSHOT=YYYYMMDDTHHMMSSZ` selects Ubuntu's snapshot service when
+available. All shipped formats are subsequently regenerated with the matching WASM
+engine. The runtime TDS is assembled from Ubuntu's TeX packages; the engine sources
+come from the pinned TeX Live submodule, so these are distinct provenance/version layers.
+
+The Rust crate is an optional host-independent core, tested natively and via its
+WASM bindings. It is not an additional mandatory download for the TypeScript API.
+Shared detection fixtures enforce parity for bibliography/index routing. Runtime
+orchestration and full SyncTeX position lookup currently live in TypeScript.

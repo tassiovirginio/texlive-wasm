@@ -1,3 +1,5 @@
+import { decompress } from '../vfs/tar';
+
 /**
  * Minimal gzip decompression helpers.
  *
@@ -12,18 +14,5 @@ export function strFromU8(bytes: Uint8Array): string {
 
 /** Async gzip decompress via the platform DecompressionStream. */
 export async function gunzip(bytes: Uint8Array): Promise<Uint8Array> {
-  const Ctor = (globalThis as { DecompressionStream?: typeof DecompressionStream })
-    .DecompressionStream;
-  if (!Ctor) {
-    throw new Error(
-      'DecompressionStream is not available; ship a gzip polyfill or upgrade Node/browser.',
-    );
-  }
-  // Copy into a fresh ArrayBuffer-backed Uint8Array — Blob's BlobPart only
-  // accepts views over ArrayBuffer, not SharedArrayBuffer.
-  const ab = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(ab).set(bytes);
-  const stream = new Blob([ab]).stream().pipeThrough(new Ctor('gzip'));
-  const out = await new Response(stream).arrayBuffer();
-  return new Uint8Array(out);
+  return decompress(bytes, 'gzip', 64 * 1024 * 1024);
 }

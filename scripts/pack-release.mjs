@@ -157,6 +157,13 @@ async function main() {
     }
   }
 
+  for (const name of readdirSync(artifactsDir).filter((n) => /^tex-packages(?:-[a-z]+)?\.json$/.test(n))) {
+    const source = join(artifactsDir,name);
+    const manifest = JSON.parse(await readFile(source,'utf8'));
+    if (manifest.version.replace(/^v/,'') !== version.replace(/^v/,'')) throw new Error(`Manifest version mismatch: ${name}`);
+    const dest = join(outDir,name); await copyFile(source,dest); assets[name] = await hashAndSize(dest);
+  }
+
   const checksums = {
     version,
     generatedAt: new Date().toISOString(),

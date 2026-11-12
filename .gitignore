@@ -82,3 +82,10 @@ plans/
 
 # Personal per-project instructions, never repo content.
 CLAUDE.local.md
+
+# Test reports and Rust build outputs
+coverage/
+playwright-report/
+test-results/
+rust/target/
+rust/pkg/

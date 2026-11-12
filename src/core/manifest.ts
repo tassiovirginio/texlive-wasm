@@ -1,3 +1,6 @@
+import { fetchAsset } from './assets';
+import { safeRelativePath } from './paths';
+
 /**
  * tex-packages.json — content-addressed manifest of TL files.
  *
@@ -12,8 +15,7 @@
  *      cache or fetched from the CDN is checked against its `files[].sha256`
  *      (withIntegrity + FetchFsOptions.verify in vfs/index.ts). Files inside
  *      an already-verified bundle are NOT re-hashed one by one, and a file the
- *      manifest does not list passes through unchecked — the manifest indexes
- *      the TL tree, it is not an allowlist for everything an app may mount. A
+ *      manifest does not list is rejected by the verified cache/CDN layers. A
  *      backend the caller supplies itself (TauriFS, a custom `vfs` chain) is
  *      the caller's to verify; `withIntegrity()` is exported for that.
  *   3. Reverse-lookup which CTAN package a TDS file belongs to (used in error
@@ -54,16 +56,62 @@ export interface TexPackagesManifest {
   files: Record<string, ManifestEntry>;
 }
 
-export async function loadManifest(url: string): Promise<TexPackagesManifest> {
-  const r = await fetch(url, { cache: 'force-cache' });
+export async function loadManifest(
+  url: string,
+  signal?: AbortSignal,
+): Promise<TexPackagesManifest> {
+  const r = await fetchAsset(url, { cache: 'force-cache', ...(signal ? { signal } : {}) });
   if (!r.ok) {
     throw new Error(`Failed to load manifest from ${url}: HTTP ${r.status}`);
   }
-  const json = (await r.json()) as TexPackagesManifest;
-  if (json.schema !== 1) {
-    throw new Error(`Unsupported manifest schema: ${json.schema}`);
+  return validateManifest(await r.json());
+}
+
+/** Validate network JSON before treating it as a trusted runtime index. */
+export function validateManifest(value: unknown): TexPackagesManifest {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('Invalid manifest');
+  const m = value as Record<string, unknown>;
+  if (m.schema !== 1) throw new Error(`Unsupported manifest schema: ${m.schema}`);
+  if (
+    typeof m.version !== 'string' ||
+    !m.version.trim() ||
+    typeof m.generatedAt !== 'string' ||
+    !Number.isFinite(Date.parse(m.generatedAt)) ||
+    !m.files ||
+    typeof m.files !== 'object' ||
+    Array.isArray(m.files)
+  ) {
+    throw new Error('Invalid manifest metadata');
   }
-  return json;
+  for (const key of ['coreBundleUrl', 'fullBundleUrl', 'cdnBaseUrl']) {
+    if (m[key] !== null && typeof m[key] !== 'string') throw new Error(`Invalid manifest ${key}`);
+  }
+  for (const key of ['coreBundleSha256', 'fullBundleSha256']) {
+    if (
+      m[key] != null &&
+      (typeof m[key] !== 'string' || !/^[a-f0-9]{64}$/i.test(m[key] as string))
+    ) {
+      throw new Error(`Invalid manifest ${key}`);
+    }
+  }
+  for (const [path, value] of Object.entries(m.files)) {
+    const entry = value as ManifestEntry | null;
+    if (
+      safeRelativePath(path) !== path ||
+      !entry ||
+      typeof entry !== 'object' ||
+      typeof entry.sha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/i.test(entry.sha256) ||
+      !Number.isSafeInteger(entry.size) ||
+      entry.size < 0 ||
+      !['core', 'full', 'cdn'].includes(entry.tier) ||
+      (entry.package !== null && typeof entry.package !== 'string')
+    ) {
+      throw new Error(`Invalid manifest file: ${path}`);
+    }
+  }
+  return value as TexPackagesManifest;
 }
 
 export function tierOf(manifest: TexPackagesManifest, tdsPath: string): ManifestTier | null {

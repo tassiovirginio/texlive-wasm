@@ -151,6 +151,9 @@ jobs:
 
       - run: npm ci
 
+      - name: wrapper regression tests
+        run: npm run typecheck && npm test && npm run build && node test/node-smoke.mjs
+
       - name: download all engine artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -202,6 +205,8 @@ jobs:
           for engine in pdflatex xelatex lualatex; do
             node scripts/pack-tds.mjs --tier core --engine "$engine" --no-brotli
           done
+          npx tsx scripts/build-release-manifests.ts
+          node scripts/smoke-wrapper.mjs pdflatex
           ls -la engine-artifacts/*.tar.gz
 
       - name: upload TDS bundles
@@ -210,7 +215,9 @@ jobs:
           name: tds-bundles
           # Top-level bundles only; .tar.br is never published (WebKit has no
           # DecompressionStream('br')).
-          path: engine-artifacts/*.tar.gz
+          path: |
+            engine-artifacts/*.tar.gz
+            engine-artifacts/tex-packages*.json
           # Already gzip — re-deflating hundreds of MB buys nothing.
           compression-level: 0
           retention-days: 7
@@ -280,6 +287,9 @@ jobs:
       - name: pack release tarballs
         run: |
           node scripts/pack-release.mjs --version "$RELEASE_TAG"
+          npm run build
+          node scripts/pack-wrapper.mjs
+          node test/package-smoke.mjs
           ls -la release/
           cat release/checksums.json
 
@@ -293,9 +303,12 @@ jobs:
           files: |
             release/*.tar.gz
             release/*.dat.gz
+            release/*.tgz
+            release/tex-packages*.json
             release/checksums.json
           fail_on_unmatched_files: true
           generate_release_notes: true
+          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
 
   # npm trusted publishing (OIDC) — no NPM_TOKEN secret anywhere. One-time
   # setup on npmjs.com: trusted publisher for repo typeward/texlive-wasm,

@@ -4,9 +4,14 @@
  * per-engine Web Workers, exactly as a consumer app would use it.
  */
 
-import { createEngine, latexmk, willRunBibtex, willRunBiber } from '@typeward/texlive-wasm';
+import {
+  createEngineManager,
+  latexmk,
+  willRunBibtex,
+  willRunBiber,
+  willRunMakeindex,
+} from '@typeward/texlive-wasm';
 import type {
-  EngineHandle,
   EngineId,
   FileInput,
   LatexmkEngine,
@@ -79,66 +84,18 @@ export function warmTds(): Promise<void> {
   return tdsWarm;
 }
 
-interface Slot {
-  promise: Promise<EngineHandle>;
-  busy: number;
-  lastUsed: number;
-}
-
-/**
- * Lazy, memoized engine handles with a small LRU cap: each worker drains the
- * full TDS into its own in-memory FS, so keeping all six alive is expensive.
- * Busy engines are never evicted.
- */
-const slots = new Map<EngineId, Slot>();
-const MAX_LIVE_ENGINES = 3;
-let clock = 0;
-
-export function getEngine(id: EngineId): Promise<EngineHandle> {
-  const existing = slots.get(id);
-  if (existing) {
-    existing.lastUsed = ++clock;
-    return existing.promise;
-  }
-  evictIdleEngine();
-  setEngineStatus(`loading ${id}.wasm (${ENGINE_SIZES[id]}) + unpacking TeX tree…`);
-  const promise = createEngine(id, {
+const manager = createEngineManager({
+  maxLiveEngines: 3,
+  onLoad: (id) => setEngineStatus(`loading ${id}.wasm (${ENGINE_SIZES[id]})…`),
+  config: (id) => ({
     enginePath: coreUrl(`${id}/emscripten/${id}.wasm`),
-    // biber's bundle is its Perl runtime VFS, not the TeX tree.
-    bundleUrl: id === 'biber' ? coreUrl('biber/emscripten/biber-vfs.tar.gz') : coreUrl('texmf.tar.gz'),
+    bundleUrl:
+      id === 'biber' ? coreUrl('biber/emscripten/biber-vfs.tar.gz') : coreUrl('texmf.tar.gz'),
     ...(id === 'xelatex' || id === 'bibtexu' ? { icuDataUrl: coreUrl('icudt78l.dat') } : {}),
-  }).then((handle) => {
-    setEngineStatus(`${id} ready`);
-    return handle;
-  });
-  slots.set(id, { promise, busy: 0, lastUsed: ++clock });
-  // A failed init must not poison the slot forever.
-  promise.catch(() => slots.delete(id));
-  return promise;
-}
+  }),
+});
 
-function evictIdleEngine(): void {
-  if (slots.size < MAX_LIVE_ENGINES) return;
-  let victim: EngineId | null = null;
-  let oldest = Infinity;
-  for (const [id, slot] of slots) {
-    if (slot.busy === 0 && slot.lastUsed < oldest) {
-      oldest = slot.lastUsed;
-      victim = id;
-    }
-  }
-  if (!victim) return; // everything is busy — allow the extra engine
-  const slot = slots.get(victim)!;
-  slots.delete(victim);
-  void slot.promise.then((h) => h.dispose()).catch(() => {});
-}
-
-function markBusy(ids: EngineId[], delta: number): void {
-  for (const id of ids) {
-    const slot = slots.get(id);
-    if (slot) slot.busy += delta;
-  }
-}
+export const getEngine = manager.engine;
 
 export interface CompileRequest {
   engine: LatexmkEngine;
@@ -156,35 +113,25 @@ export interface CompileRequest {
 export async function compile(req: CompileRequest): Promise<LatexmkResult> {
   await warmTds();
 
-  const src = req.files.map((f) => (typeof f.content === 'string' ? f.content : '')).join('\n');
   // Use the library's own detection (classic \bibliography AND biblatex
   // backend=bibtex vs default-backend biber) so the pre-created handles
   // always match what latexmk will actually invoke.
-  const needBib = willRunBibtex(req.files);
-  const needBiber = willRunBiber(req.files);
-  const needIdx = src.includes('\\makeindex') || src.includes('\\printindex');
-  // Plain documents (no refs/TOC/citations) are done in one pass — skip the
-  // aux-stabilization pass latexmk would otherwise spend proving that.
-  const mayNeedRerun =
-    needBib || needIdx || /\\(tableofcontents|ref|pageref|cite|label)\b/.test(src);
-
+  const needBib = willRunBibtex(req.files, req.mainTex);
+  const needBiber = willRunBiber(req.files, req.mainTex);
+  const needIdx = willRunMakeindex(req.files, req.mainTex);
   const involved: EngineId[] = [req.engine];
   if (needBib) involved.push('bibtexu');
   if (needBiber) involved.push('biber');
   if (needIdx) involved.push('makeindex');
   if (req.engine === 'xelatex') involved.push('xdvipdfmx');
 
-  const handles: NonNullable<LatexmkOptions['handles']> = {
-    tex: await getEngine(req.engine),
-  };
-  if (needBib) handles.bibtex = await getEngine('bibtexu');
-  if (needBiber) handles.biber = await getEngine('biber');
-  if (needIdx) handles.makeindex = await getEngine('makeindex');
-  if (req.engine === 'xelatex') handles.xdvipdfmx = await getEngine('xdvipdfmx');
-
-  markBusy(involved, +1);
-  setEngineStatus(`compiling with ${req.engine}…`);
-  try {
+  return manager.withEngines(involved, async (engines) => {
+    const handles: NonNullable<LatexmkOptions['handles']> = { tex: engines.get(req.engine)! };
+    if (needBib) handles.bibtex = engines.get('bibtexu')!;
+    if (needBiber) handles.biber = engines.get('biber')!;
+    if (needIdx) handles.makeindex = engines.get('makeindex')!;
+    if (req.engine === 'xelatex') handles.xdvipdfmx = engines.get('xdvipdfmx')!;
+    setEngineStatus(`compiling with ${req.engine}…`);
     const result = await latexmk({
       engine: req.engine,
       mainTex: req.mainTex,
@@ -192,15 +139,17 @@ export async function compile(req: CompileRequest): Promise<LatexmkResult> {
       bibtex: needBib,
       biber: needBiber,
       makeindex: needIdx,
-      rerun: mayNeedRerun ? 'auto' : false,
+      rerun: 'auto',
       ...(req.synctex ? { synctex: true } : {}),
       handles,
     });
     setEngineStatus(
-      result.success ? `done — ${result.passes} pass(es)` : `failed (exit ${result.exitCode})`,
+      result.success
+        ? `done — ${result.passes} pass(es)`
+        : result.maxPassesReached
+          ? `references unresolved after ${result.passes} passes`
+          : `failed (exit ${result.exitCode})`,
     );
     return result;
-  } finally {
-    markBusy(involved, -1);
-  }
+  });
 }

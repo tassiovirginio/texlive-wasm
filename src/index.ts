@@ -13,7 +13,7 @@
 export { createEngine } from './core/engine';
 export { createEngineManager } from './core/manager';
 export type { EngineManager, EngineManagerOptions } from './core/manager';
-export { latexmk, willRunBibtex, willRunBiber } from './latexmk';
+export { latexmk, willRunBibtex, willRunBiber, willRunMakeindex } from './latexmk';
 export { PdfLatex } from './engines/pdflatex';
 export { XeLatex } from './engines/xelatex';
 export { LuaLatex } from './engines/lualatex';

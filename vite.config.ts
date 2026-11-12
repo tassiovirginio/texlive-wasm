@@ -1,7 +1,6 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'node:path';
 import wasm from 'vite-plugin-wasm';
-import topLevelAwait from 'vite-plugin-top-level-await';
 import dts from 'vite-plugin-dts';
 
 export default defineConfig({
@@ -10,9 +9,9 @@ export default defineConfig({
   // ("/assets/worker-*.js") — consumers bundling the lib (Typeward app)
   // can't resolve a root-absolute asset path inside node_modules.
   base: './',
+  server: { watch: { ignored: ['**/engine/**', '**/vendor/**', '**/rust/target/**'] } },
   plugins: [
     wasm(),
-    topLevelAwait(),
     dts({
       entryRoot: 'src',
       outDir: 'dist',
@@ -25,6 +24,8 @@ export default defineConfig({
     target: 'es2022',
     lib: {
       entry: {
+        node: resolve(__dirname, 'src/node.ts'),
+        'node-worker': resolve(__dirname, 'src/node-worker.ts'),
         index: resolve(__dirname, 'src/index.ts'),
         tauri: resolve(__dirname, 'src/tauri.ts'),
         worker: resolve(__dirname, 'src/core/worker.ts'),
@@ -34,7 +35,14 @@ export default defineConfig({
       fileName: (format, entry) => `${entry}.${format === 'es' ? 'js' : 'cjs'}`,
     },
     rollupOptions: {
-      external: ['comlink', '@tauri-apps/plugin-fs', 'node:fs', 'node:path', 'node:url'],
+      external: [
+        'comlink',
+        '@tauri-apps/plugin-fs',
+        'node:fs',
+        'node:path',
+        'node:url',
+        'node:worker_threads',
+      ],
       output: {
         preserveModules: false,
       },
@@ -44,7 +52,7 @@ export default defineConfig({
   },
   worker: {
     format: 'es',
-    plugins: () => [wasm(), topLevelAwait()],
+    plugins: () => [wasm()],
   },
   // Test config lives in vitest.config.ts (vitest does not merge this file
   // when a dedicated config exists).

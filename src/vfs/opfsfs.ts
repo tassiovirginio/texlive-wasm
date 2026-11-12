@@ -35,6 +35,9 @@ export interface OpfsBackend extends VfsBackend {
 }
 
 export async function createOpfsFs(opts: OpfsFsOptions = {}): Promise<OpfsBackend> {
+  if (typeof navigator === 'undefined' || !navigator.storage?.getDirectory) {
+    throw new Error('texlive-wasm: OPFS is not available in this browser context');
+  }
   const rootName = opts.rootName ?? 'texlive-wasm';
   const version = opts.version ?? 'unversioned';
   const root = await navigator.storage.getDirectory();

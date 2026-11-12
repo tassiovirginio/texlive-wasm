@@ -309,3 +309,84 @@ describe('worker: lazy fetch for helper tools', () => {
     expect(dec(result.outputs.get('main.bbl'))).toBe('BBL');
   });
 });
+
+it('keeps the first listed backend authoritative for duplicate paths', async () => {
+  let content: string | undefined;
+  installEngine({
+    callMain: (_args, fs) => {
+      content = dec(fs.readFile('/texmf-dist/tex/latex/base/article.cls'));
+      return producesPdf([], fs);
+    },
+  });
+  const first = tdsMap({ 'tex/latex/base/article.cls': 'FIRST' });
+  const second = tdsMap({ 'tex/latex/base/article.cls': 'SECOND' });
+  const { host, meta } = hostFor(first);
+  host.read = async (i, p) => (i === 0 ? first : second).get(p) ?? null;
+  const worker = new WorkerImpl();
+  await worker.init(
+    { engineId: 'pdflatex', config: { enginePath }, backendMeta: [meta[0]!, meta[0]!] },
+    host,
+  );
+  await worker.run({ args: ['main.tex'] });
+  expect(content).toBe('FIRST');
+});
+
+it('resolves versioned engine URLs and loads an explicit format ahead of bundled formats', async () => {
+  let format: string | undefined;
+  installEngine({
+    callMain: (_args, fs) => {
+      format = dec(fs.readFile('/texmf-dist/web2c/pdftex/pdflatex.fmt'));
+      return producesPdf([], fs);
+    },
+  });
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('CUSTOM FORMAT'));
+  const { host, meta } = hostFor(tdsMap());
+  const worker = new WorkerImpl();
+  await worker.init(
+    {
+      engineId: 'pdflatex',
+      config: { enginePath: `${enginePath}?v=1`, fmtPath: 'https://test/format' },
+      backendMeta: meta,
+    },
+    host,
+  );
+  await worker.run({ args: ['main.tex'] });
+  expect(format).toBe('CUSTOM FORMAT');
+  expect(fetchMock).toHaveBeenCalledWith('https://test/format');
+});
+
+it('provides UTF-8 stdin to each fresh Emscripten instance', async () => {
+  let received = '';
+  globalThis.__texliveFakeFactory = async (options: unknown) => {
+    const { stdin } = options as { stdin: () => number | null };
+    const bytes: number[] = [];
+    for (let b = stdin(); b !== null; b = stdin()) bytes.push(b);
+    received = new TextDecoder().decode(new Uint8Array(bytes));
+    return createFakeModule({ callMain: producesPdf });
+  };
+  const { host, meta } = hostFor(tdsMap());
+  const worker = new WorkerImpl();
+  await worker.init({ engineId: 'pdflatex', config: { enginePath }, backendMeta: meta }, host);
+  await worker.run({ args: ['main.tex'], stdin: 'olá\n' });
+  expect(received).toBe('olá\n');
+  await worker.run({ args: ['main.tex'], stdin: new Uint8Array([65]) });
+  expect(received).toBe('A');
+});
+it('honors explicit format selection and reads logs from a confined custom cwd', async () => {
+  installEngine({
+    callMain: (args, fs) => {
+      expect(args.some((arg) => arg.startsWith('-fmt='))).toBe(false);
+      fs.writeFile('/project/sub/main.log', 'custom log');
+      return 0;
+    },
+  });
+  const { host, meta } = hostFor(tdsMap());
+  const worker = new WorkerImpl();
+  await worker.init({ engineId: 'pdflatex', config: { enginePath }, backendMeta: meta }, host);
+  const result = await worker.run({
+    args: ['-ini', 'main.tex'],
+    cwd: '/project/sub',
+    files: [{ path: 'sub/main.tex', content: 'source' }],
+  });
+  expect(result.log).toBe('custom log');
+});

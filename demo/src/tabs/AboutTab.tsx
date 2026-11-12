@@ -15,7 +15,9 @@ const ENGINES = [
 export function AboutTab() {
   const cell = { padding: '6px 12px', 'border-bottom': '1px solid #eee' } as const;
   return (
-    <div style={{ padding: '16px 24px', overflow: 'auto', 'max-width': '760px', 'line-height': '1.6' }}>
+    <div
+      style={{ padding: '16px 24px', overflow: 'auto', 'max-width': '760px', 'line-height': '1.6' }}
+    >
       <h2 style={{ margin: '0 0 8px 0' }}>How this works</h2>
       <p style={{ 'font-size': '14px', color: '#444' }}>
         Every PDF on this site is produced <strong>entirely in your browser</strong>: TeX Live 2026
@@ -54,8 +56,8 @@ export function AboutTab() {
       <ul style={{ 'font-size': '14px', color: '#444', 'padding-left': '20px' }}>
         <li>
           A gzipped TeX tree (<code>texmf.tar.gz</code>: LaTeX packages, fonts, formats) — the
-          status bar shows the exact size; fetched once and shared by every engine via the
-          browser HTTP cache.
+          status bar shows the exact size; fetched once and shared by every engine via the browser
+          HTTP cache.
         </li>
         <li>The engine you use, on demand (sizes above).</li>
         <li>
@@ -73,18 +75,22 @@ export function AboutTab() {
         <li>
           The full bibliography stack is here: classic BibTeX, biblatex via{' '}
           <code>backend=bibtex</code> (BibTeXu with <code>--wolfgang</code>), CSL styles in-engine
-          under LuaLaTeX, and <strong>real biber</strong> — Perl 5.42 + biber 2.19 compiled to
-          wasm, output byte-identical to native. Its artifact is lazily fetched only when a
+          under LuaLaTeX, and <strong>real biber</strong> — Perl 5.42 + biber 2.19 compiled to wasm,
+          output byte-identical to native. Its artifact is lazily fetched only when a
           default-backend biblatex document compiles.
         </li>
-        <li>SyncTeX forward/reverse lookups are Phase-4 work (the parser lists input files today).</li>
+        <li>
+          SyncTeX supports source/PDF position queries; this demo currently lists input files.
+        </li>
         <li>Desktop browsers are the target; mobile devices may hit memory limits.</li>
       </ul>
 
       <p style={{ 'font-size': '14px' }}>
-        <a href="https://github.com/typeward/texlive-wasm">GitHub repository</a> ·{' '}
-        <a href="https://github.com/typeward/texlive-wasm#install">Install &amp; usage docs</a> ·
-        MIT-licensed wrapper; engine artifacts inherit their TeX Live licenses.
+        <a href="https://github.com/tassiovirginio/texlive-wasm">GitHub repository</a> ·{' '}
+        <a href="https://github.com/tassiovirginio/texlive-wasm#install">
+          Install &amp; usage docs
+        </a>{' '}
+        · MIT-licensed wrapper; engine artifacts inherit their TeX Live licenses.
       </p>
     </div>
   );

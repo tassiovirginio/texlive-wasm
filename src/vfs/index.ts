@@ -45,11 +45,11 @@ export async function defaultBackends(
   let manifest: TexPackagesManifest | null = null;
   if (config.manifestUrl) {
     try {
-      manifest = await loadManifest(config.manifestUrl);
+      manifest = await loadManifest(config.manifestUrl, config.initSignal);
     } catch (err) {
       console.warn(
         `texlive-wasm: could not load manifest ${config.manifestUrl} (${String(err)}); ` +
-          `cached and CDN files will not be integrity-checked`,
+          `unverified cache/CDN reads require allowUnverifiedAssets`,
       );
     }
   }
@@ -74,10 +74,15 @@ export async function defaultBackends(
 
   let opfs: Awaited<ReturnType<typeof createOpfsFs>> | null = null;
   if (isOpfsAvailable()) {
-    opfs = await createOpfsFs(manifest ? { version: manifest.version } : {});
+    try {
+      opfs = await createOpfsFs(manifest ? { version: manifest.version } : {});
+    } catch {
+      console.warn('texlive-wasm: OPFS unavailable; continuing without persistent cache');
+    }
     // A persistent cache is exactly what an attacker wants to poison: verify
     // on the way out, so one bad write cannot serve a bad file forever.
-    layers.push(manifest ? withIntegrity(opfs, manifest) : opfs);
+    if (opfs && manifest) layers.push(withIntegrity(opfs, manifest));
+    else if (opfs && allowUnverified) layers.push(opfs);
   }
 
   if (config.cdnBaseUrl) {
@@ -108,8 +113,8 @@ export async function defaultBackends(
  * A mismatch is reported as a miss (the next tier answers, or the engine
  * reports the file missing) — never as bytes the engine will interpret.
  *
- * Files the manifest does not list pass through unchecked: the manifest is an
- * index of the TL tree, not an allowlist of everything an app may mount.
+ * Files the manifest does not list are rejected. Custom unverified backends
+ * can be mounted explicitly without this wrapper.
  */
 export function withIntegrity(backend: VfsBackend, manifest: TexPackagesManifest): VfsBackend {
   const wrapped: VfsBackend = {
@@ -120,7 +125,7 @@ export function withIntegrity(backend: VfsBackend, manifest: TexPackagesManifest
       return (await matches(manifest, tdsPath, bytes)) ? bytes : null;
     },
   };
-  if (backend.exists) wrapped.exists = (p: string) => backend.exists!(p);
+  if (backend.exists) wrapped.exists = async (p: string) => (await wrapped.read(p)) !== null;
   if (backend.list) wrapped.list = (p: string) => backend.list!(p);
   if (backend.init) wrapped.init = () => backend.init!();
   if (backend.dispose) wrapped.dispose = () => backend.dispose!();
@@ -133,7 +138,7 @@ async function matches(
   bytes: Uint8Array,
 ): Promise<boolean> {
   const expected = expectedSha256(manifest, tdsPath.replace(/^\/+/, ''));
-  if (!expected) return true;
+  if (!expected) return false;
   const actual = await sha256Hex(bytes);
   if (actual === expected.toLowerCase()) return true;
   console.warn(

@@ -12,6 +12,10 @@ export type EngineId =
   | 'biber';
 
 export interface EngineConfig {
+  /** Initialization deadline, including downloads. Default: 300000 ms; 0 disables. */
+  initTimeoutMs?: number;
+  /** Abort initialization; never sent across the worker boundary. */
+  initSignal?: AbortSignal;
   /** URL or absolute path of the engine `.wasm` artifact. */
   enginePath?: string;
   /** URL or absolute path of the engine's pre-built `.fmt` file (LaTeX format). */
@@ -87,7 +91,7 @@ export interface RunOptions {
   files?: FileInput[];
   /** Working directory inside the engine. Default: `/project`. */
   cwd?: string;
-  /** stdin payload. Reserved — not implemented yet. */
+  /** stdin payload, encoded as UTF-8 when a string is supplied. */
   stdin?: string | Uint8Array;
   /**
    * kpathsea variable overrides (TEXINPUTS, TEXMFCNF, ...). Injected as
@@ -111,7 +115,7 @@ export interface RunOptions {
   /**
    * If true (default), the worker parses missing-file errors out of the .log
    * after a failed compile, asks the VFS backends for those paths, writes
-   * them into MEMFS, and retries the compile once. Set false to disable, or
+   * them into MEMFS, and retries the compile up to eight times. Set false to disable, or
    * `{ maxRetries }` to allow more rounds — useful when lazily-fetched
    * packages `\RequirePackage` further missing files and the backends are
    * cheap to consult (local TauriFS reads, warm OPFS cache).

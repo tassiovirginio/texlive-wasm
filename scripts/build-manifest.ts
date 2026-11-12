@@ -50,8 +50,9 @@ interface Manifest {
   files: Record<string, ManifestEntry>;
 }
 
-async function main(): Promise<void> {
+export async function buildManifest(args: string[] = process.argv.slice(2)): Promise<void> {
   const { values } = parseArgs({
+    args,
     options: {
       tds: { type: 'string', default: 'engine/source/texlive-source/build/output/texmf-dist' },
       'core-list': { type: 'string', default: 'scripts/data/core-tier.list' },
@@ -222,7 +223,7 @@ export function inferPackage(rel: string): string | null {
 
 // Only run when invoked as a script (tests import the helpers above).
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  main().catch((err) => {
+  buildManifest().catch((err) => {
     console.error(err);
     process.exit(1);
   });

@@ -76,3 +76,12 @@ See `plan.md` Phase 1 for design and the remaining ICU-data + fontconfig work.
 - wasi-sdk releases: https://github.com/WebAssembly/wasi-sdk/releases
 - Tectonic (watch for WASM port): https://github.com/tectonic-typesetting/tectonic/issues/166
 - LuaMetaTeX (candidate v2 engine): https://github.com/contextgarden/luametatex
+
+## Regression checks
+
+Every functional change must include meaningful regression tests. Run typecheck,
+unit coverage and the relevant integration tests before committing. Coverage gates
+live in `vitest.config.ts`; do not lower them to hide regressions. `npm run check`
+checks the library and native Rust core; `npm run test:browser` covers browser
+workers and storage. Engine changes additionally require the real engine smokes.
+Node worker-thread execution is now supported. The WASI target remains experimental.

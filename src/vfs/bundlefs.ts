@@ -1,3 +1,4 @@
+import { fetchAsset } from '../core/assets';
 /**
  * BundleFS — serves a TL TDS subset that was preloaded into memory.
  *
@@ -15,7 +16,8 @@
 import type { VfsBackend } from '../core/types';
 import { assertSha256, loadManifest } from '../core/manifest';
 import { safeRelativePath } from '../core/paths';
-import { decompress, untar } from './tar';
+import { decompress, untar, MAX_DECOMPRESSED_BYTES } from './tar';
+import { readLimited } from '../core/download';
 
 export interface BundleFsOptions {
   /** Manifest URL; its `coreBundleUrl` locates the bundle when `bundleUrl` is not given. */
@@ -76,16 +78,9 @@ export async function createBundleFs(opts: BundleFsOptions): Promise<VfsBackend>
     }
     if (!bytes && bundleUrl) {
       requireIntegrity(bundleUrl, expectedSha, opts.allowUnverified === true);
-      const r = await fetch(bundleUrl);
+      const r = await fetchAsset(bundleUrl);
       if (!r.ok) throw new Error(`BundleFs: HTTP ${r.status} for ${bundleUrl}`);
-      bytes = new Uint8Array(await r.arrayBuffer());
-      const maxCompressed = opts.maxCompressedBytes ?? MAX_COMPRESSED_BYTES;
-      if (bytes.byteLength > maxCompressed) {
-        throw new Error(
-          `BundleFs: ${bundleUrl} is ${bytes.byteLength} bytes, past the ${maxCompressed}-byte ` +
-            `download limit; refusing to unpack it`,
-        );
-      }
+      bytes = await readLimited(r, opts.maxCompressedBytes ?? MAX_COMPRESSED_BYTES);
     }
     if (!bytes) return;
     // Verify the compressed blob before unpacking it: everything in here —
@@ -101,6 +96,12 @@ export async function createBundleFs(opts: BundleFsOptions): Promise<VfsBackend>
           `it is neither gzip nor a plain tar. Brotli has no magic bytes, so name the file ` +
           `.tar.br or pass format: 'br' explicitly.`,
       );
+    }
+    if (bytes.length > (opts.maxCompressedBytes ?? MAX_COMPRESSED_BYTES)) {
+      throw new Error('BundleFs: compressed bytes exceed download limit');
+    }
+    if (format === 'raw' && bytes.length > (opts.maxBytes ?? MAX_DECOMPRESSED_BYTES)) {
+      throw new Error('BundleFs: tar exceeds decompressed limit');
     }
     const tar = format === 'raw' ? bytes : await decompress(bytes, format, opts.maxBytes);
     let rejected = 0;
@@ -177,7 +178,13 @@ function stripLeading(p: string): string {
  * with them already means tampering with the app.
  */
 function requireIntegrity(bundleUrl: string, sha256: string | undefined, allow: boolean): void {
-  if (sha256 || allow || isSameOrigin(bundleUrl)) return;
+  if (
+    sha256 ||
+    allow ||
+    isSameOrigin(bundleUrl) ||
+    (bundleUrl.startsWith('file:') && typeof process !== 'undefined' && !!process.versions?.node)
+  )
+    return;
   throw new Error(
     `BundleFs: refusing to load ${bundleUrl} — no SHA-256 for it. Publish the digest in the ` +
       `manifest (coreBundleSha256), pass it as \`sha256\`, or serve the bundle from the app's ` +

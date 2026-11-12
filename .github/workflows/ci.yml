@@ -41,7 +41,48 @@ jobs:
         run: npm run typecheck
 
       - name: unit tests
-        run: npm test
+        run: npm run test:coverage
 
       - name: build (library only, no engine artifacts yet)
         run: npm run build
+
+      - name: packaged Node worker integration
+        run: node test/node-smoke.mjs
+
+      - name: install browser engines
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: browser integration
+        run: npm run test:browser
+
+      - name: build demo
+        run: npm ci --prefix demo && npm run build --prefix demo
+
+      - name: build Tauri frontend
+        run: npm ci --prefix examples/tauri && npm run build --prefix examples/tauri
+
+      - name: Rust tests and formatting
+        run: |
+          cargo fmt --manifest-path rust/Cargo.toml -- --check
+          cargo test --locked --manifest-path rust/Cargo.toml
+
+      - name: Rust WASM bindings and parity
+        run: |
+          rustup target add wasm32-unknown-unknown
+          version=$(awk '/^name = "wasm-bindgen"$/{getline; print $3}' rust/Cargo.lock | tr -d '"')
+          cargo install wasm-bindgen-cli --version "$version" --locked
+          bash rust/build-wasm.sh
+          node rust/wasm-smoke.mjs
+          node test/rust-parity.mjs
+
+      - name: retain coverage and browser failure details
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: validation-reports
+          path: |
+            coverage/
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7

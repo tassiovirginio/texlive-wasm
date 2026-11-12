@@ -1,0 +1,37 @@
+[package]
+name = "texlive-wasm"
+version = "0.3.0-alpha"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+description = "TeX Live in WebAssembly. Rust port of the texlive-wasm wrapper, compiled to wasm32-unknown-unknown."
+repository = "https://github.com/tassiovirginio/texlive-wasm"
+keywords = ["latex", "texlive", "webassembly", "wasm", "wasi"]
+categories = ["wasm", "text-processing"]
+
+[lib]
+# cdylib → the .wasm artifact; rlib → native unit tests + reuse as a dependency.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# wasm-bindgen bindings. Enabled only when building for wasm32 with this feature;
+# the crate otherwise compiles as a normal pure-Rust library.
+wasm = ["dep:wasm-bindgen", "dep:js-sys"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+# Pure-Rust backend (miniz_oxide) so gzip works on wasm32-unknown-unknown
+# without a C toolchain or a host DecompressionStream.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+regex = "1"
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = "debuginfo"

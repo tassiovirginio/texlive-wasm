@@ -21,7 +21,11 @@
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "dist",
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "@typeward/texlive-wasm": ["./src/index.ts"],
+      "@typeward/texlive-wasm/tauri": ["./src/tauri.ts"]
+    }
   },
   "include": ["src/**/*.ts", "test/**/*.ts"],
   "exclude": ["node_modules", "dist", "example", "engine", "vendor", "demo"]

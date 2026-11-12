@@ -3,6 +3,7 @@ import type { EngineHandle, EngineId, RunResult } from '../src/core/types';
 
 const created: EngineId[] = [];
 const disposed: EngineId[] = [];
+let failRun = false;
 let failFor: EngineId | null = null;
 /** Set to hold a run open: the manager must not evict an engine mid-compile. */
 let runGate: { promise: Promise<void>; release: () => void } | null = null;
@@ -18,6 +19,10 @@ vi.mock('../src/core/engine', () => ({
       id,
       config: {},
       run: async (): Promise<RunResult> => {
+        if (failRun) {
+          ready = false;
+          throw new Error('terminated');
+        }
         if (runGate) await runGate.promise;
         return {
           exitCode: 0,
@@ -51,6 +56,7 @@ beforeEach(() => {
   created.length = 0;
   disposed.length = 0;
   failFor = null;
+  failRun = false;
   runGate = null;
 });
 
@@ -105,6 +111,7 @@ describe('createEngineManager', () => {
     failFor = 'lualatex';
     await expect(mgr.engine('lualatex')).rejects.toThrow('boom');
     failFor = null;
+    failRun = false;
     await expect(mgr.engine('lualatex')).resolves.toBeDefined();
   });
 
@@ -224,4 +231,26 @@ describe('createEngineManager', () => {
     expect(second).not.toBe(first);
     expect(created).toEqual(['pdflatex', 'pdflatex']);
   });
+});
+
+it('recreates a worker that died outside the manager and repairs old leases', async () => {
+  const mgr = createEngineManager({ config });
+  const lease = await mgr.engine('pdflatex');
+  // Simulate a worker termination observed through isReady().
+  // The mock can kill its raw worker during a run, like timeout/abort.
+  failRun = true;
+  await expect(lease.run({ args: [] })).rejects.toThrow('terminated');
+  failRun = false;
+  await expect(lease.run({ args: [] })).resolves.toMatchObject({ exitCode: 0 });
+  expect(created).toEqual(['pdflatex', 'pdflatex']);
+});
+
+it('returns to the memory cap after a multi-engine scope releases its pins', async () => {
+  const mgr = createEngineManager({ config, maxLiveEngines: 1 });
+  await mgr.withEngines(['pdflatex', 'bibtexu', 'makeindex', 'xdvipdfmx'], async (handles) => {
+    expect(handles.size).toBe(4);
+    expect(mgr.live()).toHaveLength(4);
+  });
+  expect(mgr.live()).toHaveLength(1);
+  expect(disposed).toHaveLength(3);
 });

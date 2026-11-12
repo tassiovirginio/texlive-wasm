@@ -22,6 +22,7 @@ const TAURI_RESOURCE = 11;
 class TauriAwarePdfLatex extends _PdfLatex {
   /** Resolves once the TauriFS-backed handle is attached (Tauri only). */
   private tauriInit: Promise<void> | null = null;
+  private texmfRoot = 'texlive-wasm/texmf';
 
   constructor(config: EngineConfig & { texmfRoot?: string } = {}) {
     const { texmfRoot, ...cfg } = config;
@@ -29,14 +30,21 @@ class TauriAwarePdfLatex extends _PdfLatex {
     if (isTauri()) {
       // The TDS is bundled under $RESOURCE/texlive-wasm/texmf (see
       // tauri.conf.json bundle.resources).
-      this.tauriInit = this.initTauriHandle(cfg, texmfRoot ?? 'texlive-wasm/texmf');
+      this.texmfRoot = texmfRoot ?? this.texmfRoot;
+      this.tauriInit = this.initTauriHandle(cfg, this.texmfRoot);
+      void this.tauriInit.catch(() => {});
     }
   }
 
   override async compile(options: PdfLatexCompileOptions): Promise<RunResult> {
     // Wait for the TauriFS handle before the base class lazily creates a
     // plain one — otherwise the first compile races the backend setup.
-    if (this.tauriInit) await this.tauriInit;
+    if (isTauri() && !this.handle?.isReady() && !this.tauriInit) {
+      this.tauriInit = this.initTauriHandle(this.options, this.texmfRoot);
+    }
+    if (this.tauriInit) {
+      try { await this.tauriInit; } finally { this.tauriInit = null; }
+    }
     return super.compile(options);
   }
 

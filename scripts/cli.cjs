@@ -28,12 +28,11 @@ const path = require('node:path');
 const fs = require('node:fs');
 const zlib = require('node:zlib');
 const crypto = require('node:crypto');
-const { pipeline } = require('node:stream/promises');
-const { Readable, Writable } = require('node:stream');
-const { createGunzip } = require('node:zlib');
+const { extractTarGz } = require('./lib/archive.cjs');
 
-const REPO_OWNER = process.env.TEXLIVE_WASM_REPO_OWNER || 'typeward';
-const REPO_NAME = process.env.TEXLIVE_WASM_REPO_NAME || 'texlive-wasm';
+const packageRepository = require('../package.json').repository.url.match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?$/);
+const REPO_OWNER = process.env.TEXLIVE_WASM_REPO_OWNER || packageRepository?.[1] || 'typeward';
+const REPO_NAME = process.env.TEXLIVE_WASM_REPO_NAME || packageRepository?.[2] || 'texlive-wasm';
 
 // Published TDS bundle names (scripts/pack-tds.mjs → scripts/pack-release.mjs).
 const TDS_BUNDLE = /^texmf(-core-[A-Za-z0-9]+)?\.tar\.(gz|br)$/;
@@ -131,7 +130,7 @@ async function downloadAssets(opts) {
   const available = Object.keys(checksums.assets ?? {});
   // Accept both "pdflatex-emscripten" and "pdflatex-emscripten.tar.gz":
   // checksums.json keys carry the archive suffix.
-  const assetNames = (opts.assets ?? available).map((name) => {
+  const assetNames = (opts.assets ?? available.filter((name) => !name.endsWith('.tgz'))).map((name) => {
     if (checksums.assets?.[name]) return name;
     const suffixed = available.find(
       (a) => a === `${name}.tar.gz` || a === `${name}.gz` || a === `${name}.dat.gz`,
@@ -193,7 +192,7 @@ async function downloadAssets(opts) {
       await extractTarGz(buf, dest);
       log(`  unpacked ${name}`);
     } else if (name.endsWith('.gz')) {
-      const raw = zlib.gunzipSync(buf);
+      const raw = zlib.gunzipSync(buf, { maxOutputLength: 512 * 1024 * 1024 });
       const outPath = path.join(dest, name.replace(/\.gz$/, ''));
       fs.mkdirSync(path.dirname(outPath), { recursive: true });
       fs.writeFileSync(outPath, raw);
@@ -267,82 +266,24 @@ async function fetchToBuffer(url, tmpPath) {
   if (!res.ok) {
     throw new Error(`HTTP ${res.status} for ${url}`);
   }
-  const ab = await res.arrayBuffer();
-  const buf = Buffer.from(ab);
+  const maxBytes = 256 * 1024 * 1024;
+  if (Number(res.headers.get('content-length')) > maxBytes) {
+    await res.body?.cancel();
+    throw new Error('Asset exceeds download limit');
+  }
+  const chunks = [];
+  let length = 0;
+  for await (const chunk of res.body) {
+    length += chunk.length;
+    if (length > maxBytes) throw new Error('Asset exceeds download limit');
+    chunks.push(chunk);
+  }
+  const buf = Buffer.concat(chunks, length);
   if (tmpPath) {
     fs.mkdirSync(path.dirname(tmpPath), { recursive: true });
     fs.writeFileSync(tmpPath, buf);
   }
   return buf;
-}
-
-async function extractTarGz(buf, destDir) {
-  const raw = await new Promise((resolve, reject) => {
-    const chunks = [];
-    Readable.from(buf)
-      .pipe(createGunzip())
-      .on('data', (c) => chunks.push(c))
-      .on('end', () => resolve(Buffer.concat(chunks)))
-      .on('error', reject);
-  });
-  let off = 0;
-  while (off + 512 <= raw.length) {
-    const header = raw.subarray(off, off + 512);
-    if (header.every((b) => b === 0)) break;
-    const name = readCString(header, 0, 100);
-    const prefix = readCString(header, 345, 155);
-    const size = parseOctal(header, 124, 12);
-    const typeflag = String.fromCharCode(header[156] || 0x30);
-    const full = prefix ? prefix + '/' + name : name;
-    off += 512;
-    if (typeflag === '5') {
-      // directory
-      const dirPath = safeJoin(destDir, full);
-      if (dirPath) fs.mkdirSync(dirPath, { recursive: true });
-      continue;
-    }
-    // '0' and NUL both mean regular file in ustar (fromCharCode maps byte 0
-    // to '0' via the || fallback, so a single check suffices).
-    if (typeflag === '0') {
-      const data = raw.subarray(off, off + size);
-      const outPath = safeJoin(destDir, full);
-      if (!outPath) {
-        throw new Error(`tar entry "${full}" escapes the destination directory`);
-      }
-      fs.mkdirSync(path.dirname(outPath), { recursive: true });
-      fs.writeFileSync(outPath, data);
-    }
-    off += Math.ceil(size / 512) * 512;
-  }
-}
-
-/**
- * Containment check against zip-slip: reject absolute entry names and any
- * resolved path that lands outside destDir.
- */
-function safeJoin(destDir, entryName) {
-  if (!entryName || path.isAbsolute(entryName) || /^[A-Za-z]:/.test(entryName)) return null;
-  const out = path.resolve(destDir, entryName);
-  const base = path.resolve(destDir);
-  if (out !== base && !out.startsWith(base + path.sep)) return null;
-  return out;
-}
-
-function readCString(buf, start, len) {
-  let end = start;
-  while (end < start + len && buf[end] !== 0) end++;
-  return buf.slice(start, end).toString('utf8');
-}
-
-function parseOctal(buf, start, len) {
-  let n = 0;
-  for (let i = start; i < start + len; i++) {
-    const c = buf[i];
-    if (c === 0 || c === 0x20) continue;
-    if (c < 0x30 || c > 0x37) break;
-    n = n * 8 + (c - 0x30);
-  }
-  return n;
 }
 
 function log(msg) {

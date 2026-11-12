@@ -72,20 +72,23 @@ interface Slot {
 function noop(): void {}
 
 export function createEngineManager(options: EngineManagerOptions): EngineManager {
-  const maxLive = Math.max(1, options.maxLiveEngines ?? 3);
+  const maxLive = options.maxLiveEngines ?? 3;
+  if (!Number.isSafeInteger(maxLive) || maxLive < 1)
+    throw new Error('maxLiveEngines must be a positive integer');
   const slots = new Map<EngineId, Slot>();
   let clock = 0;
 
   function get(id: EngineId): Slot {
     const existing = slots.get(id);
-    if (existing) {
+    if (existing && (!existing.current || existing.current.isReady())) {
       existing.lastUsed = ++clock;
       return existing;
     }
     // Synchronous slot creation is load-bearing: withEngines() pins its slots
     // before it awaits anything, so a concurrent compile cannot evict a
     // handle that is still being constructed.
-    const evicted = evictIdle();
+    if (existing) slots.delete(id);
+    const evicted = existing ? existing.promise.then((h) => h.dispose()) : evictIdle();
     options.onLoad?.(id);
     const promise = evicted.then(() => createEngine(id, options.config(id)));
     const slot: Slot = {
@@ -134,6 +137,14 @@ export function createEngineManager(options: EngineManagerOptions): EngineManage
     );
   }
 
+  async function trimIdle(): Promise<void> {
+    while (slots.size > maxLive) {
+      const size = slots.size;
+      await evictIdle();
+      if (slots.size === size) break;
+    }
+  }
+
   /**
    * Wrap a handle so that using it keeps it alive. Without this an engine
    * obtained from engine() is unpinned while it runs, so a concurrent compile
@@ -157,6 +168,7 @@ export function createEngineManager(options: EngineManagerOptions): EngineManage
           return await live.run(runOptions);
         } finally {
           slot.pins--;
+          await trimIdle();
         }
       },
       // Disposing the worker behind the manager's back would leave the slot
@@ -190,6 +202,7 @@ export function createEngineManager(options: EngineManagerOptions): EngineManage
         return await fn(handles);
       } finally {
         for (const slot of pinned) slot.pins--;
+        await trimIdle();
       }
     },
 

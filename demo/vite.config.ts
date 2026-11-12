@@ -1,7 +1,6 @@
 import { defineConfig, type Plugin, type Connect } from 'vite';
 import solid from 'vite-plugin-solid';
 import wasm from 'vite-plugin-wasm';
-import topLevelAwait from 'vite-plugin-top-level-await';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 
@@ -75,7 +74,7 @@ export default defineConfig({
   // Relative base: the site deploys under https://<owner>.github.io/<repo>/
   // and this is a single-page hash-tab app, so './' works everywhere.
   base: './',
-  plugins: [solid(), wasm(), topLevelAwait(), serveEngineArtifacts()],
+  plugins: [solid(), wasm(), serveEngineArtifacts()],
   clearScreen: false,
   // The engines are single-threaded wasm — no COOP/COEP isolation needed,
   // dev and production (plain GitHub Pages) behave identically.
@@ -90,7 +89,7 @@ export default defineConfig({
   },
   worker: {
     format: 'es',
-    plugins: () => [wasm(), topLevelAwait()],
+    plugins: () => [wasm()],
   },
   optimizeDeps: {
     exclude: ['@typeward/texlive-wasm'],

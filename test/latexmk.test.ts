@@ -368,3 +368,76 @@ describe('latexmk multi-pass orchestration', () => {
     expect(result.passes).toBeGreaterThanOrEqual(2);
   });
 });
+
+it('reports an exhausted pass budget without claiming convergence', async () => {
+  const tex = fakeHandle('pdflatex', ({ n }) => ({
+    outputs: {
+      'main.pdf': 'PDF',
+      'main.aux': String(n),
+      'main.log': 'Rerun to get cross-references right',
+    },
+  }));
+  const result = await latexmk({
+    engine: 'pdflatex',
+    mainTex: 'main.tex',
+    files: [],
+    handles: { tex },
+  });
+  expect(result.converged).toBe(false);
+  expect(result.maxPassesReached).toBe(true);
+  expect(result.success).toBe(false);
+  expect(result.pdf).toBeDefined();
+});
+
+it('reports convergence for stable auxiliary files', async () => {
+  const tex = fakeHandle('pdflatex', () => ({ outputs: { 'main.pdf': 'PDF', 'main.aux': 'A' } }));
+  const result = await latexmk({
+    engine: 'pdflatex',
+    mainTex: 'main.tex',
+    files: [],
+    handles: { tex },
+  });
+  expect(result.converged).toBe(true);
+  expect(result.maxPassesReached).toBe(false);
+  expect(result.success).toBe(true);
+});
+
+it('reruns BibTeX when citations change after the first TeX pass', async () => {
+  const tex = fakeHandle('pdflatex', ({ n, files }) => {
+    if (n === 3) expect(files.get('main.bbl')).toBe('BBL-2');
+    return { outputs: { 'main.aux': n === 1 ? 'citation A' : 'citation B', 'main.pdf': 'PDF' } };
+  });
+  const bibtex = fakeHandle('bibtexu', ({ n }) => ({ outputs: { 'main.bbl': `BBL-${n}` } }));
+  const result = await latexmk({
+    engine: 'pdflatex',
+    mainTex: 'main.tex',
+    files: [{ path: 'main.tex', content: '\\bibliography{refs}' }],
+    handles: { tex, bibtex },
+  });
+  expect(result.success).toBe(true);
+  expect(bibtex.calls).toHaveLength(2);
+});
+
+it('rejects non-finite pass budgets and invalid deadlines before acquiring an engine', async () => {
+  const opts = { engine: 'pdflatex' as const, mainTex: 'main.tex', files: [] };
+  await expect(latexmk({ ...opts, rerun: { maxPasses: Infinity } })).rejects.toThrow(
+    'finite integer',
+  );
+  await expect(latexmk({ ...opts, timeoutMs: -1 })).rejects.toThrow('Invalid timeoutMs');
+});
+it('accepts an explicit disabled pipeline deadline', async () => {
+  const tex = fakeHandle('pdflatex', () => ({
+    outputs: { 'main.pdf': 'PDF', 'main.aux': 'stable' },
+  }));
+  expect(
+    (
+      await latexmk({
+        engine: 'pdflatex',
+        mainTex: 'main.tex',
+        files: [],
+        handles: { tex },
+        timeoutMs: 0,
+      })
+    ).success,
+  ).toBe(true);
+});

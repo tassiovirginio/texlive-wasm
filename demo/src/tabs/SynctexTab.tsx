@@ -1,8 +1,7 @@
 /**
  * SyncTeX demo: compiles a two-file project with -synctex=1 and parses the
  * resulting .synctex.gz with the library's JS parser. Honest about scope:
- * only the input-file listing is implemented today; forward/reverse position
- * lookups are Phase-4 work.
+ * the UI lists input files; the library also exposes forward/reverse position queries.
  */
 
 import { For, Show, createSignal } from 'solid-js';
@@ -23,8 +22,8 @@ export function SynctexTab() {
           <>
             The engine runs with <code>-synctex=1</code> and emits a compressed{' '}
             <code>.synctex.gz</code> alongside the PDF. <code>createSynctex()</code> gunzips and
-            parses it in JS. Forward/reverse position lookup (click-to-source) is scheduled for
-            Phase&nbsp;4 — today the parser exposes the input-file list below.
+            parses it in JS. The library exposes forward/reverse position queries in PDF points;
+            this view shows the input-file list.
           </>
         }
         onResult={async (result) => {

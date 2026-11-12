@@ -1,3 +1,4 @@
+import { fetchAsset } from './assets';
 /**
  * Worker entry point. One Comlink-exposed instance per engine.
  *
@@ -230,6 +231,17 @@ class WorkerImpl implements WorkerApi {
       await b.init?.();
     }
 
+    if (this.config.fmtPath) {
+      const fmt = FMT_PATH[this.engineId];
+      if (!fmt) throw new Error(`Engine ${this.engineId} does not use a LaTeX format`);
+      const response = await fetchAsset(this.config.fmtPath);
+      if (!response.ok) throw new Error(`HTTP ${response.status} fetching fmtPath`);
+      this.tdsFiles.set(
+        fmt.slice('/texmf-dist/'.length),
+        new Uint8Array(await response.arrayBuffer()),
+      );
+    }
+
     const glueUrl = this.resolveEngineGlueUrl();
     this.glueFactory = (
       (await import(/* @vite-ignore */ glueUrl)) as { default: ModuleFactory }
@@ -240,7 +252,7 @@ class WorkerImpl implements WorkerApi {
     // glue's own loader, which is correct just slower.
     if (this.config.enginePath) {
       try {
-        const r = await fetch(this.config.enginePath);
+        const r = await fetchAsset(this.config.enginePath);
         if (r.ok) {
           this.wasmModule = await WebAssembly.compile(await r.arrayBuffer());
         }
@@ -251,7 +263,7 @@ class WorkerImpl implements WorkerApi {
 
     this.icuData = opts.icuData ?? null;
     if (!this.icuData && opts.config.icuDataUrl) {
-      const r = await fetch(opts.config.icuDataUrl);
+      const r = await fetchAsset(opts.config.icuDataUrl);
       if (!r.ok) {
         throw new Error(
           `texlive-wasm: HTTP ${r.status} fetching icuDataUrl ${opts.config.icuDataUrl}`,
@@ -270,7 +282,7 @@ class WorkerImpl implements WorkerApi {
         const rel = safeRelativePath(tdsPath);
         if (!rel) continue;
         const bytes = await backend.read(tdsPath);
-        if (bytes) this.tdsFiles.set(rel, bytes);
+        if (bytes && !this.tdsFiles.has(rel)) this.tdsFiles.set(rel, bytes);
       }
     }
 
@@ -292,13 +304,16 @@ class WorkerImpl implements WorkerApi {
   }
 
   /** Build a fresh engine instance with the TDS + ICU state applied. */
-  private async createInstance(): Promise<EmscriptenModule> {
+  private async createInstance(stdin?: string | Uint8Array): Promise<EmscriptenModule> {
     if (!this.engineId || !this.glueFactory) {
       throw new Error('Worker.init() must be called before run()');
     }
+    const input = stdin === undefined ? new Uint8Array() : normalizeBytes(stdin);
+    let inputOffset = 0;
     const cachedModule = this.wasmModule;
     const module = await this.glueFactory({
       noInitialRun: true,
+      stdin: () => input[inputOffset++] ?? null,
       thisProgram: `/bin/${this.engineId}`,
       print: (line: string) => {
         this.stdoutBuf += line + '\n';
@@ -527,7 +542,7 @@ class WorkerImpl implements WorkerApi {
     // maxRetries when packages pull in further missing files transitively
     // (cheap with local backends like TauriFS).
     const lazy = opts.lazyFetch ?? true;
-    const maxRetries = lazy === false ? 0 : lazy === true ? 1 : Math.max(0, lazy.maxRetries ?? 1);
+    const maxRetries = lazy === false ? 0 : lazy === true ? 8 : Math.max(0, lazy.maxRetries ?? 8);
     let exitCode = 0;
     let retriesUsed = 0;
     let stdout = '';
@@ -543,7 +558,7 @@ class WorkerImpl implements WorkerApi {
       let module: EmscriptenModule;
       let FS: EmscriptenFS;
       try {
-        module = await this.createInstance();
+        module = await this.createInstance(opts.stdin);
         FS = module.FS;
         inputs.clear();
         for (const file of opts.files ?? []) {
@@ -591,7 +606,7 @@ class WorkerImpl implements WorkerApi {
 
       outputs = new Map<string, Uint8Array>();
       collectProduced(FS, '/project', '', inputs, outputs);
-      log = this.findLog(FS, opts.args);
+      log = this.findLog(FS, opts.args, cwd);
 
       // Harvest engine-written caches (luaotfload font db, etc.) for the
       // next instance — even failed compiles usually completed the cache
@@ -647,7 +662,7 @@ class WorkerImpl implements WorkerApi {
     if (!this.engineId || !TEX_ENGINES.has(this.engineId)) return [];
     const args: string[] = [];
     const fmt = FMT_PATH[this.engineId];
-    if (fmt && pathExists(FS, fmt)) {
+    if (fmt && pathExists(FS, fmt) && !selectsOwnFormat(opts.args)) {
       args.push(`-fmt=${fmt}`);
     } else if (!selectsOwnFormat(opts.args)) {
       // Without a format the engine falls back to mktexfmt, which needs
@@ -742,7 +757,7 @@ class WorkerImpl implements WorkerApi {
    * lazy fetch below is a no-op for every helper — it never even finds a log
    * to read. xdvipdfmx writes no log at all; its diagnostics are on stderr.
    */
-  private findLog(FS: EmscriptenFS, args: string[]): string {
+  private findLog(FS: EmscriptenFS, args: string[], cwd: string): string {
     if (!this.engineId) return '';
     const ext = LOG_EXT[this.engineId];
     if (!ext) return ''; // xdvipdfmx: diagnostics go to stderr, not a file
@@ -750,7 +765,8 @@ class WorkerImpl implements WorkerApi {
     if (!stem) return '';
     // The tool writes its log into the cwd under the job stem, regardless of
     // where the input file lived.
-    return readTextFile(FS, `/project/${stem}${ext}`);
+    const path = safeResolve('/project', `${cwd}/${stem}${ext}`);
+    return path ? readTextFile(FS, path) : '';
   }
 
   /** Job stem: honors -jobname, else the basename of the tool's input file. */
@@ -780,7 +796,7 @@ class WorkerImpl implements WorkerApi {
       throw new Error('resolveEngineGlueUrl: config missing');
     }
     if (this.config.enginePath) {
-      return this.config.enginePath.replace(/\.wasm$/, '.js');
+      return this.config.enginePath.replace(/\.wasm(?=[?#]|$)/, '.js');
     }
     // No artifact ships inside the npm package (the .wasm files live on
     // GitHub Releases), so there is no meaningful default URL to guess —

@@ -1,15 +1,15 @@
 {
   "name": "@typeward/texlive-wasm",
-  "version": "0.2.5-alpha",
-  "description": "TeX Live in WebAssembly — pdflatex, xelatex, lualatex in the browser and on the edge. Offline-first, Tauri-friendly.",
+  "version": "0.3.0-alpha",
+  "description": "TeX Live in WebAssembly — pdflatex, xelatex, lualatex in browsers and Node. Offline-first, Tauri-friendly.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/typeward/texlive-wasm.git"
+    "url": "git+https://github.com/tassiovirginio/texlive-wasm.git"
   },
-  "homepage": "https://github.com/typeward/texlive-wasm#readme",
+  "homepage": "https://github.com/tassiovirginio/texlive-wasm#readme",
   "bugs": {
-    "url": "https://github.com/typeward/texlive-wasm/issues"
+    "url": "https://github.com/tassiovirginio/texlive-wasm/issues"
   },
   "type": "module",
   "engines": {
@@ -23,6 +23,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js",
+      "require": "./dist/node.cjs"
     },
     "./tauri": {
       "types": "./dist/tauri.d.ts",
@@ -43,6 +48,7 @@
   "files": [
     "dist/",
     "scripts/cli.cjs",
+    "scripts/lib/",
     "README.md",
     "LICENSE"
   ],
@@ -68,7 +74,12 @@
     "release:pack": "node scripts/pack-release.mjs",
     "tauri": "npm --prefix examples/tauri run tauri --",
     "tauri:dev": "npm --prefix examples/tauri run tauri:dev",
-    "tauri:build": "npm --prefix examples/tauri run tauri:build"
+    "tauri:build": "npm --prefix examples/tauri run tauri:build",
+    "test:coverage": "vitest run --coverage",
+    "test:node": "npm run build && node test/node-smoke.mjs",
+    "test:browser": "playwright test",
+    "test:rust": "cargo test --locked --manifest-path rust/Cargo.toml",
+    "check": "npm run lint && npm run typecheck && npm run test:coverage && npm run test:node && npm run test:rust"
   },
   "keywords": [
     "latex",
@@ -99,18 +110,24 @@
     }
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.1",
     "@tauri-apps/plugin-fs": "^2.5.1",
     "@types/node": "^20.14.0",
+    "@vitest/coverage-v8": "^4.1.12",
     "prettier": "^3.3.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
-    "vite": "^5.4.0",
-    "vite-plugin-dts": "^4.2.0",
-    "vite-plugin-top-level-await": "^1.4.4",
+    "vite": "^6.4.6",
+    "vite-plugin-dts": "^5.1.2",
     "vite-plugin-wasm": "^3.3.0",
-    "vitest": "^2.1.0"
+    "vitest": "^4.1.12"
   },
   "publishConfig": {
     "access": "public"
+  },
+  "overrides": {
+    "@microsoft/api-extractor": {
+      "minimatch": "^11.0.1"
+    }
   }
 }

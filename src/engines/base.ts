@@ -59,12 +59,30 @@ export abstract class BaseEngineWrapper {
     if (options.engine) this.handle = options.engine;
   }
 
-  protected async ensureHandle(): Promise<EngineHandle> {
-    if (this.handle) return this.handle;
+  private loading: Promise<EngineHandle> | null = null;
+
+  protected async ensureHandle(limits: RunLimits = {}): Promise<EngineHandle> {
+    if (this.handle && (this.options.engine || this.handle.isReady())) return this.handle;
+    if (this.loading) return this.loading;
     const { engine: _ignored, ...config } = this.options;
     void _ignored;
-    this.handle = await createEngine(this.engineId, config);
-    return this.handle;
+    const timeoutMs = limits.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
+    this.loading = createEngine(this.engineId, {
+      ...config,
+      initTimeoutMs:
+        timeoutMs > 0
+          ? config.initTimeoutMs && config.initTimeoutMs > 0
+            ? Math.min(timeoutMs, config.initTimeoutMs)
+            : timeoutMs
+          : (config.initTimeoutMs ?? 0),
+      ...(limits.signal ? { initSignal: limits.signal } : {}),
+    });
+    try {
+      this.handle = await this.loading;
+      return this.handle;
+    } finally {
+      this.loading = null;
+    }
   }
 
   /** Drop the worker if this wrapper owns one. */
@@ -81,7 +99,11 @@ export abstract class BaseEngineWrapper {
     files: FileInput[],
     extra: RunLimits & { cwd?: string; env?: Record<string, string> } = {},
   ): Promise<RunResult> {
-    const handle = await this.ensureHandle();
+    if (extra.timeoutMs !== undefined && (!Number.isFinite(extra.timeoutMs) || extra.timeoutMs < 0))
+      throw new Error('Invalid timeoutMs');
+    const started = performance.now();
+    if (extra.signal?.aborted) throw new Error('Engine run aborted');
+    const handle = await this.ensureHandle(extra);
     const opts: RunOptions = {
       args,
       files,
@@ -90,7 +112,11 @@ export abstract class BaseEngineWrapper {
     // 0 means "no ceiling"; undefined means "the caller did not think about
     // it", which is exactly when a default belongs.
     const timeoutMs = extra.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
-    if (timeoutMs > 0) opts.timeoutMs = timeoutMs;
+    if (timeoutMs > 0) {
+      const remaining = Math.ceil(timeoutMs - (performance.now() - started));
+      if (remaining <= 0) throw new Error('Engine invocation timed out during initialization');
+      opts.timeoutMs = remaining;
+    }
     if (extra.signal !== undefined) opts.signal = extra.signal;
     if (extra.env !== undefined) opts.env = extra.env;
     return handle.run(opts);

@@ -102,6 +102,10 @@ export interface LatexmkOptions {
 export interface LatexmkResult extends CompileResult {
   /** Number of TeX engine passes actually run. */
   passes: number;
+  /** Whether auxiliary files stabilized without a rerun request. */
+  converged: boolean;
+  /** The pass cap prevented the requested convergence. */
+  maxPassesReached: boolean;
 }
 
 const RERUN_PATTERNS = [
@@ -121,6 +125,14 @@ const DEFAULT_MAX_PASSES = 4;
 const BIBLATEX_MAX_PASSES = 5;
 
 export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
+  if (opts.timeoutMs !== undefined && (!Number.isFinite(opts.timeoutMs) || opts.timeoutMs < 0))
+    throw new Error('Invalid timeoutMs');
+  if (
+    typeof opts.rerun === 'object' &&
+    opts.rerun !== null &&
+    !Number.isSafeInteger(opts.rerun.maxPasses)
+  )
+    throw new Error('maxPasses must be a finite integer');
   const stripExt = (p: string) => p.replace(/\.tex$/i, '');
   // TeX writes all outputs into the cwd under the jobname (= input basename),
   // even when mainTex lives in a subdirectory — key everything by basename.
@@ -136,7 +148,8 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
   const logs: LogEntry[] = [];
   const isXetex = opts.engine === 'xelatex';
 
-  const biblatexMode = usesBiblatex(opts.files);
+  const sources = reachableSources(opts.files, opts.mainTex);
+  const biblatexMode = usesBiblatex(sources);
 
   const rerunMode = opts.rerun ?? 'auto';
   const maxPasses =
@@ -149,20 +162,22 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
           : DEFAULT_MAX_PASSES;
 
   // Detect bibtex/biber/makeindex from sources if 'auto'.
-  const needBibtex = resolveAuto(opts.bibtex, () => detectBibtex(opts.files, biblatexMode));
+  const needBibtex = resolveAuto(opts.bibtex, () => detectBibtex(sources, biblatexMode));
   // biber serves default-backend biblatex docs; mutually exclusive with the
   // bibtex path (backend=bibtex routes through bibtexu instead).
   const needBiber =
-    !needBibtex &&
-    resolveAuto(opts.biber, () => biblatexMode && !biblatexBackendIsBibtex(opts.files));
-  const needMakeindex = resolveAuto(opts.makeindex, () => detectMakeindex(opts.files));
+    !needBibtex && resolveAuto(opts.biber, () => biblatexMode && !biblatexBackendIsBibtex(sources));
+  const needMakeindex = resolveAuto(opts.makeindex, () => willRunMakeindex(sources));
 
   const texExtraArgs = opts.synctex ? ['-synctex=1'] : [];
 
   let lastAux: string | null = null;
   let lastBcf: string | null = null;
+  let lastBibAux: string | null = null;
   let lastIdx: string | null = null;
   let pass = 0;
+  let converged = false;
+  let pendingRerun = false;
   let exitCode = 0;
   let outputs = new Map<string, Uint8Array>();
 
@@ -190,9 +205,11 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
 
   // The deadline covers the pipeline, not one invocation: each engine call
   // gets whatever is left of it, so extra passes cannot extend it.
-  const deadline = opts.timeoutMs !== undefined ? performance.now() + opts.timeoutMs : null;
+  const deadline =
+    opts.timeoutMs !== undefined && opts.timeoutMs > 0 ? performance.now() + opts.timeoutMs : null;
   const budget = (): RunLimits => {
-    const limits: RunLimits = {};
+    const limits: RunLimits = opts.timeoutMs === 0 ? { timeoutMs: 0 } : {};
+    if (opts.signal?.aborted) throw new Error('latexmk: pipeline aborted');
     if (opts.signal) limits.signal = opts.signal;
     if (deadline !== null) {
       const left = Math.ceil(deadline - performance.now());
@@ -224,7 +241,12 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
       let helpersRan = false;
 
       // Bibtex on the first pass that produced an .aux.
-      if (pass === 1 && needBibtex && outputs.has(auxPath)) {
+      if (
+        needBibtex &&
+        outputs.has(auxPath) &&
+        bytesToString(outputs.get(auxPath)) !== lastBibAux
+      ) {
+        lastBibAux = bytesToString(outputs.get(auxPath));
         bibtexWrapper ??= new Bibtexu(wrapperConfig(opts, 'bibtexu', opts.handles?.bibtex));
         const r = await bibtexWrapper.run({
           auxFile: auxPath,
@@ -294,12 +316,14 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
         }
       }
 
-      if (pass >= maxPasses) break;
       const aux = bytesToString(outputs.get(auxPath));
       const log = bytesToString(outputs.get(logPath));
       const rerunRequested = RERUN_PATTERNS.some((re) => re.test(log));
       const auxStable = lastAux !== null && aux === lastAux;
+      const hadAux = lastAux !== null;
       lastAux = aux;
+      pendingRerun = helpersRan || rerunRequested || (hadAux && !auxStable);
+      converged = !helpersRan && !rerunRequested && (auxStable || rerunMode === false);
       // A fresh .bbl/.ind must be folded in by at least one more pass.
       if (helpersRan) continue;
       if (auxStable && !rerunRequested) break;
@@ -329,11 +353,13 @@ export async function latexmk(opts: LatexmkOptions): Promise<LatexmkResult> {
   }
 
   const result: LatexmkResult = {
-    success: exitCode === 0 && outputs.has(pdfPath),
+    success: exitCode === 0 && outputs.has(pdfPath) && (rerunMode === false || !pendingRerun),
     log: bytesToString(outputs.get(logPath)),
     logs,
     exitCode,
     passes: pass,
+    converged: exitCode === 0 && converged,
+    maxPassesReached: rerunMode !== false && exitCode === 0 && pass >= maxPasses && pendingRerun,
   };
   const pdf = outputs.get(pdfPath);
   if (pdf) result.pdf = pdf;
@@ -351,6 +377,67 @@ function resolveAuto<T extends boolean | 'auto' | undefined>(
   return autoFn();
 }
 
+/** Follow literal local inputs/packages; dynamic TeX inputs keep conservative scanning. */
+function reachableSources(files: FileInput[], mainTex?: string): FileInput[] {
+  if (!mainTex) return files;
+  const key = (path: string) =>
+    path
+      .replace(/\\/g, '/')
+      .replace(/^\/project\//, '')
+      .replace(/^\.\//, '');
+  const index = new Map(files.map((file) => [key(file.path), file]));
+  const first = index.get(key(mainTex));
+  if (!first) return files;
+  const visited = new Set<FileInput>();
+  const queue = [first];
+  while (queue.length) {
+    const file = queue.pop()!;
+    if (visited.has(file)) continue;
+    visited.add(file);
+    const text = sourceText(file);
+    if (/\\(?:input|include|subfile)\s*(?![\s{])[\\]/.test(text)) return files;
+    const pattern =
+      /\\(input|include|subfile|usepackage|RequirePackage|documentclass|LoadClass)\s*(?:\[[^\]]*\])?\s*(?:\{([^}]+)\}|([^\s\\{}%]+))/g;
+    for (const match of text.matchAll(pattern)) {
+      const ext =
+        /package/.test(match[1]!) || match[1] === 'RequirePackage'
+          ? '.sty'
+          : /class/i.test(match[1]!)
+            ? '.cls'
+            : '.tex';
+      for (const name of (match[2] ?? match[3]!).split(',').map((s) => s.trim())) {
+        if (name.includes('\\') || name.includes('..')) return files;
+        const path = /\.[^/]+$/.test(name) ? name : name + ext;
+        const dir = key(file.path).split('/').slice(0, -1).join('/');
+        const dependency = index.get(key(path)) ?? index.get(key(dir ? `${dir}/${path}` : path));
+        if (dependency) queue.push(dependency);
+      }
+    }
+  }
+  return [...visited];
+}
+
+/** Source-only heuristic; generated control files remain the authoritative engine inputs. */
+function sourceText(file: FileInput): string {
+  if (!/\.(tex|ltx|sty|cls)$/i.test(file.path)) return '';
+  return stripTexComments(contentToString(file.content));
+}
+
+export function stripTexComments(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => {
+      for (let i = 0; i < line.length; i++) {
+        if (line[i] !== '%') continue;
+        let slashes = 0;
+        for (let j = i - 1; j >= 0 && line[j] === '\\'; j--) slashes++;
+        if (slashes % 2 === 0) return line.slice(0, i);
+      }
+      return line;
+    })
+    .join('\n');
+}
+
 function contentToString(content: string | Uint8Array): string {
   if (typeof content === 'string') return content;
   return new TextDecoder('utf-8', { fatal: false }).decode(content);
@@ -363,12 +450,12 @@ const BIBLATEX_PASS_OPTS = /\\PassOptionsToPackage\s*\{([^}]*)\}\s*\{\s*biblatex
 const BACKEND_BIBTEX = /backend\s*=\s*bibtex8?\s*(?:[,\]}]|$)/m;
 
 function usesBiblatex(files: FileInput[]): boolean {
-  return files.some((f) => BIBLATEX_LOAD.test(contentToString(f.content)));
+  return files.some((f) => BIBLATEX_LOAD.test(sourceText(f)));
 }
 
 function biblatexBackendIsBibtex(files: FileInput[]): boolean {
   return files.some((f) => {
-    const text = contentToString(f.content);
+    const text = sourceText(f);
     const load = BIBLATEX_LOAD.exec(text);
     if (load?.[1] && BACKEND_BIBTEX.test(load[1])) return true;
     const pass = BIBLATEX_PASS_OPTS.exec(text);
@@ -382,13 +469,15 @@ function biblatexBackendIsBibtex(files: FileInput[]): boolean {
  * can ask up front whether a compile will invoke bibtexu, instead of
  * duplicating the detection heuristics.
  */
-export function willRunBibtex(files: FileInput[]): boolean {
-  return detectBibtex(files, usesBiblatex(files));
+export function willRunBibtex(files: FileInput[], mainTex?: string): boolean {
+  const sources = reachableSources(files, mainTex);
+  return detectBibtex(sources, usesBiblatex(sources));
 }
 
 /** Same preview for biber: default-backend biblatex documents. */
-export function willRunBiber(files: FileInput[]): boolean {
-  return usesBiblatex(files) && !biblatexBackendIsBibtex(files);
+export function willRunBiber(files: FileInput[], mainTex?: string): boolean {
+  const sources = reachableSources(files, mainTex);
+  return usesBiblatex(sources) && !biblatexBackendIsBibtex(sources);
 }
 
 function detectBibtex(files: FileInput[], biblatexMode: boolean): boolean {
@@ -398,12 +487,12 @@ function detectBibtex(files: FileInput[], biblatexMode: boolean): boolean {
   // The default biber backend is left alone until biber.wasm ships.
   if (biblatexMode) return biblatexBackendIsBibtex(files);
   // Classic bibtex: `\bibliography{…}` writes the aux bibtexu processes.
-  return files.some((f) => contentToString(f.content).includes('\\bibliography{'));
+  return files.some((f) => sourceText(f).includes('\\bibliography{'));
 }
 
-function detectMakeindex(files: FileInput[]): boolean {
-  return files.some((f) => {
-    const text = contentToString(f.content);
+export function willRunMakeindex(files: FileInput[], mainTex?: string): boolean {
+  return reachableSources(files, mainTex).some((f) => {
+    const text = sourceText(f);
     return text.includes('\\makeindex') || text.includes('\\printindex');
   });
 }

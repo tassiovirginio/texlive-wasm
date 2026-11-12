@@ -75,3 +75,19 @@ describe('manifest lookups', () => {
     expect(expectedSha256(MANIFEST, 'nope')).toBeNull();
   });
 });
+
+describe('manifest validation', () => {
+  it.each([
+    null,
+    [],
+    { ...MANIFEST, files: [] },
+    { ...MANIFEST, version: '' },
+    { ...MANIFEST, generatedAt: 'yesterday' },
+    { ...MANIFEST, coreBundleSha256: 'bad' },
+    { ...MANIFEST, files: { '../escape': MANIFEST.files['tex/latex/base/article.cls'] } },
+    { ...MANIFEST, files: { a: { sha256: 'a'.repeat(64), size: -1, tier: 'cdn', package: null } } },
+  ])('rejects malformed network JSON (%#)', async (value) => {
+    stubFetch({ ok: true, json: async () => value });
+    await expect(loadManifest('https://test/manifest')).rejects.toThrow();
+  });
+});
